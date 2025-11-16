@@ -1,5 +1,5 @@
 panda-gym>=3.0.0
-pybullet>=3.2.0
+pybullet==3.2.5
 torch>=1.9.0
 torchvision>=0.10.0
 numpy>=1.21.0

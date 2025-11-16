@@ -15,7 +15,7 @@ from data import DemonstrationDataset, get_clean_transform, get_pixel_aug_transf
 
 
 def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3, 
-                 demonstrations_file='demonstrations.pkl', device='cuda'):
+                 demonstrations_file='demonstrations.pkl', device='cuda', backbone_type='resnet'):
     """
     Train a behavior cloning policy.
     
@@ -26,6 +26,7 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
         lr: Learning rate
         demonstrations_file: Path to demonstrations file
         device: Device to train on ('cuda' or 'cpu')
+        backbone_type: Backbone type ('resnet', 'vit', or 'cnn')
     """
     device = torch.device(device if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -33,21 +34,21 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
     # Get appropriate transform
     if regime == 'clean':
         transform = get_clean_transform()
-        model_name = 'policy_clean.pth'
+        model_name = f'policy_clean_{backbone_type}.pth'
     elif regime == 'pixel_aug':
         transform = get_pixel_aug_transform()
-        model_name = 'policy_pixel_aug.pth'
+        model_name = f'policy_pixel_aug_{backbone_type}.pth'
     else:
         raise ValueError(f"Unknown regime: {regime}")
     
-    print(f"Training with {regime} visual regime...")
+    print(f"Training with {regime} visual regime and {backbone_type} backbone...")
     
     # Load dataset
     dataset = DemonstrationDataset(demonstrations_file, transform=transform)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
     
     # Initialize policy
-    policy = VisuomotorBCPolicy(image_size=(84, 84), action_dim=4, use_resnet=True)
+    policy = VisuomotorBCPolicy(image_size=(84, 84), action_dim=4, backbone_type=backbone_type)
     policy.to(device)
     
     # Loss and optimizer
@@ -81,10 +82,23 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
         print(f"Epoch {epoch + 1}/{n_epochs}, Average Loss: {avg_loss:.6f}")
     
-    # Save model
+    # Save model with metadata
     os.makedirs('models', exist_ok=True)
     model_path = os.path.join('models', model_name)
-    torch.save(policy.state_dict(), model_path)
+    # Save state_dict with metadata for easier loading
+    checkpoint = {
+        'state_dict': policy.state_dict(),
+        'backbone_type': backbone_type,
+        'image_size': (84, 84),
+        'action_dim': 4,
+        'metadata': {
+            'backbone_type': backbone_type,
+            'regime': regime,
+            'image_size': (84, 84),
+            'action_dim': 4
+        }
+    }
+    torch.save(checkpoint, model_path)
     print(f"\nSaved model to {model_path}")
     
     return policy
@@ -105,6 +119,9 @@ if __name__ == '__main__':
                        help='Path to demonstrations file')
     parser.add_argument('--device', type=str, default='cuda',
                        help='Device to use (cuda or cpu)')
+    parser.add_argument('--backbone', type=str, default='resnet',
+                       choices=['resnet', 'vit', 'cnn'],
+                       help='Backbone architecture (resnet, vit, or cnn)')
     
     args = parser.parse_args()
     
@@ -114,6 +131,7 @@ if __name__ == '__main__':
         batch_size=args.batch_size,
         lr=args.lr,
         demonstrations_file=args.data,
-        device=args.device
+        device=args.device,
+        backbone_type=args.backbone
     )
 

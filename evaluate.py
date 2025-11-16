@@ -101,7 +101,7 @@ def add_visual_corruption(env, corruption_type='distractor'):
 
 
 def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100, 
-                   device='cuda', image_size=(84, 84)):
+                   device='cuda', image_size=(84, 84), backbone_type=None):
     """
     Evaluate a trained policy with visual corruption.
     
@@ -111,14 +111,16 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         n_episodes: Number of test episodes
         device: Device to run evaluation on
         image_size: Size of input images
+        backbone_type: Backbone type used in the policy ('resnet', 'vit', or 'cnn'). 
+                       If None, will be auto-detected from filename or checkpoint.
     """
     device = torch.device(device if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
-    # Load policy
+    # Load policy (backbone_type will be auto-detected if None)
     print(f"Loading policy from {policy_path}...")
     policy = load_policy(policy_path, image_size=image_size, action_dim=4, 
-                         use_resnet=True, device=device)
+                         backbone_type=backbone_type, device=device)
     
     # Get transform (use clean transform for evaluation)
     transform = get_clean_transform()
@@ -211,13 +213,16 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Evaluate visuomotor BC policy')
     parser.add_argument('--policy', type=str, required=True,
                        help='Path to trained policy weights')
-    parser.add_argument('--corruption', type=str, default='distractor',
+    parser.add_argument('--corruption', type=str, default='none',
                        choices=['distractor', 'occlusion', 'none'],
-                       help='Type of visual corruption')
+                       help='Type of visual corruption (use "none" for no corruption)')
     parser.add_argument('--episodes', type=int, default=100,
                        help='Number of test episodes')
     parser.add_argument('--device', type=str, default='cuda',
                        help='Device to use (cuda or cpu)')
+    parser.add_argument('--backbone', type=str, default=None, nargs='?',
+                       choices=['resnet', 'vit', 'cnn'],
+                       help='Backbone architecture (auto-detected from filename if not specified)')
     
     args = parser.parse_args()
     
@@ -227,6 +232,7 @@ if __name__ == '__main__':
         policy_path=args.policy,
         corruption_type=corruption_type,
         n_episodes=args.episodes,
-        device=args.device
+        device=args.device,
+        backbone_type=args.backbone
     )
 
