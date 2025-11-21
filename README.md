@@ -44,7 +44,8 @@ source venv/bin/activate  # macOS/Linux
 
 ## Project Structure
 
-- `data_collection.py`: Expert policy and demonstration collection script
+- `data_collection.py`: Scripted expert policy for panda-gym (uses privileged state)
+- `data_collection_robosuite.py`: Hybrid human + scripted teleoperation for Robosuite (vision-based)
 - `policy.py`: PyTorch policy architecture (supports CNN, ResNet-18, or ViT-B/16 backbones)
 - `data.py`: PyTorch Dataset class with data transforms
 - `train.py`: Training script for behavior cloning
@@ -56,12 +57,31 @@ source venv/bin/activate  # macOS/Linux
 
 **Important:** Make sure your virtual environment is activated first!
 
+**Option A: Scripted Expert (panda-gym) - Fast but uses privileged state:**
 ```bash
 source venv/bin/activate  # macOS/Linux
 python data_collection.py
 ```
 
-This will generate `demonstrations.pkl` containing expert trajectories.
+**Option B: Hybrid Human + Scripted (Robosuite) - Slower but vision-based:**
+```bash
+# First install keyboard library:
+pip install keyboard  # or: pip install pynput
+
+# Then run:
+python data_collection_robosuite.py
+```
+
+**Robosuite Controls:**
+- **WASD**: Move gripper (W=forward, S=back, A=left, D=right)
+- **Q/E**: Move up/down
+- **SPACE**: Close gripper (hold to close)
+- **R**: Reset current episode
+- **ENTER**: Save and move to next episode
+
+The scripted approach uses privileged state information, while the Robosuite approach combines automated movements with human keyboard input for more realistic, vision-based demonstrations.
+
+Both will generate `demonstrations.pkl` (or `demonstrations_robosuite.pkl`) containing expert trajectories.
 
 ### 2. Train a Policy
 
