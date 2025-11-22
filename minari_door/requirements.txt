@@ -1,0 +1,19 @@
+# Minari Door Offline RL Project Requirements
+
+# Core dependencies
+torch>=2.0.0
+numpy<2
+gymnasium>=0.29.0
+minari>=0.4.0
+
+# Robotics environments (for evaluation)
+gymnasium-robotics>=1.2.0
+mujoco>=3.0.0
+
+# Utilities
+tqdm
+scipy
+
+# Optional: for visualization
+matplotlib
+seaborn
