@@ -144,6 +144,12 @@ The project supports training under different visual regimes:
 - **Domain Randomization**: (To be implemented - modify data_collection.py)
 - **Distractors**: (To be implemented - modify data_collection.py)
 
+## Current Baseline (PandaPickAndPlace)
+
+- **Data**: `demonstrations_rgb.pkl` with 80 scripted-expert episodes (about 2,650 frame/action pairs). Each sample is an 84x84 RGB image plus a 4D action `[dx, dy, dz, gripper]`.
+- **Model**: `VisuomotorBCPolicy` with ResNet-18 backbone (ImageNet init) and MLP head (Tanh output), trained for 50 epochs on the clean transform, batch size 64, device=cpu. Saved at `models/policy_clean_resnet_baseline_50ep.pth`.
+- **Evaluation (clean)**: `evaluate.py --policy models/policy_clean_resnet_baseline_50ep.pth --corruption none --episodes 10 --max_steps 200 --device cpu` produced `eval_clean_50ep.txt` with 20% success (2/10) and average reward -162.5. Increase episodes and use GPU for a steadier estimate.
+
 ## Next Steps
 
 To implement Domain Randomization and Distractor Objects datasets:

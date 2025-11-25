@@ -101,7 +101,8 @@ def add_visual_corruption(env, corruption_type='distractor'):
 
 
 def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100, 
-                   device='cuda', image_size=(84, 84), backbone_type=None):
+                   device='cuda', image_size=(84, 84), backbone_type=None,
+                   max_steps=200):
     """
     Evaluate a trained policy with visual corruption.
     
@@ -154,8 +155,6 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         done = False
         episode_reward = 0.0
         steps = 0
-        max_steps = 200
-        
         while not done and steps < max_steps:
             # Render to get image
             image = env.render()
@@ -223,6 +222,8 @@ if __name__ == '__main__':
     parser.add_argument('--backbone', type=str, default=None, nargs='?',
                        choices=['resnet', 'vit', 'cnn'],
                        help='Backbone architecture (auto-detected from filename if not specified)')
+    parser.add_argument('--max_steps', type=int, default=200,
+                       help='Max steps per episode during evaluation')
     
     args = parser.parse_args()
     
@@ -233,6 +234,7 @@ if __name__ == '__main__':
         corruption_type=corruption_type,
         n_episodes=args.episodes,
         device=args.device,
-        backbone_type=args.backbone
+        backbone_type=args.backbone,
+        max_steps=args.max_steps
     )
 

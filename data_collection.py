@@ -6,6 +6,7 @@ Test change
 
 import numpy as np
 import pickle
+import argparse
 from panda_gym.envs import PandaPickAndPlaceEnv
 
 
@@ -29,26 +30,17 @@ def get_expert_action(observation, env, state):
     """
     # Handle panda-gym observation format (dict with 'observation', 'achieved_goal', 'desired_goal')
     if isinstance(observation, dict):
-        # Extract observation array and goal positions
         obs_array = np.array(observation['observation'])
-        gripper_pos = obs_array[:3]  # First 3 elements are gripper position
-        object_pos = np.array(observation['achieved_goal'])  # Object position
-        target_pos = np.array(observation['desired_goal'])  # Target position
-        # Gripper state might be in obs_array, but we'll infer from action history
-        gripper_state = obs_array[9] if len(obs_array) > 9 else 1.0
+        gripper_pos = obs_array[:3]  # end-effector position
+        gripper_width = obs_array[6] if len(obs_array) > 6 else 0.0  # finger opening
+        object_pos = np.array(observation['achieved_goal'])
+        target_pos = np.array(observation['desired_goal'])
     else:
-        # Fallback for array observations
         obs_array = np.array(observation)
-        if len(obs_array) >= 9:
-            gripper_pos = obs_array[:3]
-            object_pos = obs_array[3:6]
-            target_pos = obs_array[6:9]
-            gripper_state = obs_array[9] if len(obs_array) > 9 else 1.0
-        else:
-            gripper_pos = obs_array[:3] if len(obs_array) >= 3 else np.zeros(3)
-            object_pos = gripper_pos.copy()
-            target_pos = gripper_pos.copy()
-            gripper_state = 1.0
+        gripper_pos = obs_array[:3] if len(obs_array) >= 3 else np.zeros(3)
+        gripper_width = obs_array[6] if len(obs_array) > 6 else 0.0
+        object_pos = obs_array[7:10] if len(obs_array) >= 10 else gripper_pos.copy()
+        target_pos = obs_array[10:13] if len(obs_array) >= 13 else gripper_pos.copy()
     
     # Initialize state if needed
     if state['phase'] == 'init':
@@ -56,103 +48,79 @@ def get_expert_action(observation, env, state):
         state['target_reached'] = False
         state['grasped'] = False
         state['lifted'] = False
+        state['grasp_steps'] = 0
     
     action = np.zeros(4)
     
     # Phase 1: Reach for the cube's position (move gripper above the cube)
     if state['phase'] == 'reach':
-        target_above_cube = object_pos.copy()
-        target_above_cube[2] += 0.1  # 10cm above the cube
-        
-        # Move towards the position above the cube
-        direction = target_above_cube - gripper_pos
+        target = np.array([object_pos[0], object_pos[1], 0.25])
+        direction = target - gripper_pos
         distance = np.linalg.norm(direction)
-        
-        if distance < 0.02:  # Close enough
+        if distance < 0.02:
             state['phase'] = 'move_down'
         else:
-            # Normalize direction and scale to action space [-1, 1]
-            # Use a scaling factor to convert position differences to actions
             direction = direction / (distance + 1e-6)
-            # Scale direction to reasonable action values (max 0.3 per step)
-            max_step = 0.3
-            action[:3] = np.clip(direction * min(distance / max_step, 1.0), -1.0, 1.0)
-            action[3] = 1.0  # Keep gripper open
+            action[:3] = np.clip(direction, -1.0, 1.0)
+            action[3] = 1.0
     
     # Phase 2: Move down to grasp
     elif state['phase'] == 'move_down':
-        target_grasp = object_pos.copy()
-        target_grasp[2] = object_pos[2] + 0.02  # Slightly above the cube center
-        
-        direction = target_grasp - gripper_pos
+        target = np.array([object_pos[0], object_pos[1], 0.035])
+        direction = target - gripper_pos
         distance = np.linalg.norm(direction)
-        
-        if distance < 0.015:
+        if distance < 0.008:
             state['phase'] = 'grasp'
         else:
             direction = direction / (distance + 1e-6)
-            # Scale for precision movement
-            max_step = 0.2
-            action[:3] = np.clip(direction * min(distance / max_step, 1.0), -1.0, 1.0)
-            action[3] = 1.0  # Keep gripper open
+            action[:3] = np.clip(direction * 0.5, -1.0, 1.0)
+            action[3] = 1.0
     
     # Phase 3: Close gripper
     elif state['phase'] == 'grasp':
-        action[:3] = np.zeros(3)  # Don't move
-        action[3] = -1.0  # Close gripper
-        
-        # Check if we've grasped (gripper closed for a few steps)
-        if gripper_state < 0.5:  # Gripper is closed
-            state['grasp_steps'] = state.get('grasp_steps', 0) + 1
-            if state['grasp_steps'] > 5:  # Wait a few steps
-                state['phase'] = 'lift'
-                state['grasped'] = True
+        action[:3] = np.zeros(3)
+        action[3] = -1.0  # close gripper
+        state['grasp_steps'] += 1
+        # consider grasped once fingers are mostly closed or after a few steps
+        if gripper_width < 0.05 or state['grasp_steps'] > 12:
+            state['phase'] = 'lift'
+            state['grasped'] = True
     
     # Phase 4: Move up to the target (lift) position
     elif state['phase'] == 'lift':
-        # First lift up
         if not state['lifted']:
-            target_lift = gripper_pos.copy()
-            target_lift[2] = object_pos[2] + 0.15  # Lift 15cm up
-            
-            direction = target_lift - gripper_pos
+            target = np.array([gripper_pos[0], gripper_pos[1], 0.25])
+            direction = target - gripper_pos
             distance = np.linalg.norm(direction)
-            
             if distance < 0.02:
                 state['lifted'] = True
             else:
                 direction = direction / (distance + 1e-6)
-                max_step = 0.3
-                action[:3] = np.clip(direction * min(distance / max_step, 1.0), -1.0, 1.0)
-                action[3] = -1.0  # Keep gripper closed
-        else:
-            # Move towards target position
-            target_place = target_pos.copy()
-            target_place[2] = target_pos[2] + 0.1  # Above target
-            
-            direction = target_place - gripper_pos
+                action[:3] = np.clip(direction, -1.0, 1.0)
+                action[3] = -1.0
+        elif not state.get('at_target_xy', False):
+            target = np.array([target_pos[0], target_pos[1], 0.25])
+            direction = target - gripper_pos
             distance = np.linalg.norm(direction)
-            
             if distance < 0.02:
-                # Move down to place
-                target_final = target_pos.copy()
-                target_final[2] = target_pos[2] + 0.02
-                
-                direction = target_final - gripper_pos
-                distance = np.linalg.norm(direction)
-                
-                if distance < 0.015:
-                    action[3] = 1.0  # Open gripper to release
-                else:
-                    direction = direction / (distance + 1e-6)
-                    max_step = 0.2
-                    action[:3] = np.clip(direction * min(distance / max_step, 1.0), -1.0, 1.0)
-                    action[3] = -1.0  # Keep gripper closed
+                state['at_target_xy'] = True
             else:
                 direction = direction / (distance + 1e-6)
-                max_step = 0.3
-                action[:3] = np.clip(direction * min(distance / max_step, 1.0), -1.0, 1.0)
-                action[3] = -1.0  # Keep gripper closed
+                action[:3] = np.clip(direction, -1.0, 1.0)
+                action[3] = -1.0
+        elif not state.get('placing', False):
+            target = np.array([target_pos[0], target_pos[1], 0.05])
+            direction = target - gripper_pos
+            distance = np.linalg.norm(direction)
+            if distance < 0.01:
+                state['placing'] = True
+            else:
+                direction = direction / (distance + 1e-6)
+                action[:3] = np.clip(direction * 0.5, -1.0, 1.0)
+                action[3] = -1.0
+        else:
+            action[:3] = np.zeros(3)
+            action[3] = 1.0  # open
     
     return action
 
@@ -208,10 +176,6 @@ def collect_demonstrations(n_episodes=100, output_file='demonstrations.pkl'):
             observation = next_observation
             steps += 1
             
-            # Early termination if clearly failed (saves time)
-            if steps > 50 and reward < -0.5:
-                break
-        
         # Check if episode was successful
         elapsed = time.time() - start_time
         avg_time_per_ep = elapsed / (episode + 1)
@@ -223,9 +187,17 @@ def collect_demonstrations(n_episodes=100, output_file='demonstrations.pkl'):
         if info.get('is_success', False) or reward > 0:
             all_trajectories.append(trajectory)
             successful_episodes += 1
-            print(f"Episode {episode + 1}/{n_episodes}: ✓ Success ({steps} steps, {avg_time_per_ep:.1f}s/ep, ETA: {eta_min}m{eta_sec}s, Success rate: {100*successful_episodes/(episode+1):.1f}%)")
+            success_rate = 100 * successful_episodes / (episode + 1)
+            print(
+                f"Episode {episode + 1}/{n_episodes}: [OK] "
+                f"({steps} steps, {avg_time_per_ep:.1f}s/ep, ETA: {eta_min}m{eta_sec}s, "
+                f"Success rate: {success_rate:.1f}%)"
+            )
         else:
-            print(f"Episode {episode + 1}/{n_episodes}: ✗ Failed ({steps} steps, {avg_time_per_ep:.1f}s/ep, ETA: {eta_min}m{eta_sec}s)")
+            print(
+                f"Episode {episode + 1}/{n_episodes}: [FAIL] "
+                f"({steps} steps, {avg_time_per_ep:.1f}s/ep, ETA: {eta_min}m{eta_sec}s)"
+            )
     
     env.close()
     
@@ -243,8 +215,12 @@ def collect_demonstrations(n_episodes=100, output_file='demonstrations.pkl'):
 
 
 if __name__ == '__main__':
-    # Collect demonstrations
+    parser = argparse.ArgumentParser(description="Collect expert demonstrations for PandaPickAndPlace-v3.")
+    parser.add_argument('--episodes', type=int, default=100, help='Number of episodes to collect')
+    parser.add_argument('--output', type=str, default='demonstrations.pkl', help='Output pickle filename')
+    args = parser.parse_args()
+
     # Note: rgb_array rendering is the main bottleneck (~50-100ms per frame)
     # Each episode takes ~10-20 seconds. For 100 episodes, expect 15-30 minutes total.
-    collect_demonstrations(n_episodes=100)
+    collect_demonstrations(n_episodes=args.episodes, output_file=args.output)
 
