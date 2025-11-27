@@ -17,7 +17,7 @@ class VisuomotorBCPolicy(nn.Module):
     Head: MLP that takes flattened image features and outputs continuous actions
     """
     
-    def __init__(self, image_size=(84, 84), action_dim=4, backbone_type='resnet', feature_dim=512, use_resnet=None):
+    def __init__(self, image_size=(84, 84), action_dim=4, backbone_type='resnet', feature_dim=512, use_resnet=None, state_dim=0):
         """
         Initialize the policy network.
         
@@ -27,11 +27,13 @@ class VisuomotorBCPolicy(nn.Module):
             backbone_type: Backbone type ('resnet', 'vit', or 'cnn')
             feature_dim: Dimension of feature vector before MLP head
             use_resnet: Deprecated - use backbone_type instead. If provided, maps to 'resnet' or 'cnn'
+            state_dim: Dimension of proprioceptive state (0 if not using proprioception, 10 for full state)
         """
         super(VisuomotorBCPolicy, self).__init__()
         
         self.image_size = image_size
         self.action_dim = action_dim
+        self.state_dim = state_dim
         
         # Handle backward compatibility with use_resnet parameter
         if use_resnet is not None:
@@ -83,8 +85,10 @@ class VisuomotorBCPolicy(nn.Module):
             raise ValueError(f"Unknown backbone_type: {backbone_type}. Must be 'resnet', 'vit', or 'cnn'")
         
         # MLP head for action prediction
+        # Input dimension is backbone_output_dim + state_dim (if using proprioception)
+        head_input_dim = backbone_output_dim + state_dim
         self.head = nn.Sequential(
-            nn.Linear(backbone_output_dim, feature_dim),
+            nn.Linear(head_input_dim, feature_dim),
             nn.ReLU(),
             nn.Linear(feature_dim, feature_dim),
             nn.ReLU(),
@@ -92,12 +96,13 @@ class VisuomotorBCPolicy(nn.Module):
             nn.Tanh()  # Normalize actions to [-1, 1] range
         )
     
-    def forward(self, image):
+    def forward(self, image, state=None):
         """
         Forward pass through the network.
         
         Args:
             image: Tensor of shape (batch_size, 3, height, width)
+            state: Optional tensor of shape (batch_size, state_dim) for proprioceptive state
             
         Returns:
             action: Tensor of shape (batch_size, action_dim)
@@ -164,6 +169,10 @@ class VisuomotorBCPolicy(nn.Module):
             else:  # CNN
                 features = features.view(features.size(0), -1)
         
+        # Concatenate proprioceptive state if available
+        if state is not None and self.state_dim > 0:
+            features = torch.cat([features, state], dim=1)
+        
         # Predict action
         action = self.head(features)
         
@@ -215,6 +224,7 @@ def load_policy(model_path, image_size=(84, 84), action_dim=4, backbone_type=Non
         backbone_type = 'resnet' if use_resnet else 'cnn'
     
     # Handle both old format (just state_dict) and new format (with metadata)
+    state_dim = 0  # Default: no proprioception
     if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
         state_dict = checkpoint['state_dict']
         # Use metadata if available (overrides filename inference)
@@ -222,12 +232,17 @@ def load_policy(model_path, image_size=(84, 84), action_dim=4, backbone_type=Non
             backbone_type = checkpoint['backbone_type']
         elif 'metadata' in checkpoint and 'backbone_type' in checkpoint['metadata']:
             backbone_type = checkpoint['metadata'].get('backbone_type', backbone_type)
+        # Get state_dim from checkpoint if available
+        if 'state_dim' in checkpoint:
+            state_dim = checkpoint['state_dim']
+        elif 'metadata' in checkpoint and 'state_dim' in checkpoint['metadata']:
+            state_dim = checkpoint['metadata'].get('state_dim', 0)
     else:
         # Old format: just state_dict
         state_dict = checkpoint
     
     model = VisuomotorBCPolicy(image_size=image_size, action_dim=action_dim, 
-                               backbone_type=backbone_type, use_resnet=None)
+                               backbone_type=backbone_type, use_resnet=None, state_dim=state_dim)
     
     # For ViT, remove interpolated pos_embedding from state_dict if present
     # (we'll interpolate it on the fly during forward pass)

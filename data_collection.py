@@ -167,8 +167,22 @@ def collect_demonstrations(n_episodes=100, output_file='demonstrations.pkl'):
             # We need images for BC training, so we must render every step
             # But we can skip rendering for failed episodes to save time
             image = env.render()
-            # Store (image, action) tuple - use array() for better performance than .copy()
-            trajectory.append((np.array(image), np.array(action)))
+            
+            # Extract proprioceptive state from observation
+            if isinstance(observation, dict):
+                obs_array = np.array(observation['observation'])
+                gripper_pos = obs_array[:3]  # end-effector position
+                gripper_width = obs_array[6] if len(obs_array) > 6 else 0.0  # finger opening
+            else:
+                obs_array = np.array(observation)
+                gripper_pos = obs_array[:3] if len(obs_array) >= 3 else np.zeros(3)
+                gripper_width = obs_array[6] if len(obs_array) > 6 else 0.0
+            
+            # Concatenate proprioceptive state: [gripper_pos(3), gripper_width(1)] = 4 dims
+            proprio_state = np.concatenate([gripper_pos, [gripper_width]])
+            
+            # Store (image, proprio_state, action) tuple
+            trajectory.append((np.array(image), np.array(proprio_state), np.array(action)))
             
             # Step environment
             next_observation, reward, terminated, truncated, info = env.step(action)

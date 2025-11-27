@@ -30,11 +30,19 @@ class DemonstrationDataset(Dataset):
         with open(demonstrations_file, 'rb') as f:
             self.trajectories = pickle.load(f)
         
-        # Flatten trajectories into individual (image, action) pairs
+        # Flatten trajectories into individual (image, state, action) or (image, action) pairs
         self.data = []
+        self.use_proprioception = False
         for trajectory in self.trajectories:
-            for image, action in trajectory:
-                self.data.append((image, action))
+            if len(trajectory) > 0:
+                # Check if trajectory has proprioceptive state (3-tuple) or just (image, action) (2-tuple)
+                if len(trajectory[0]) == 3:
+                    self.use_proprioception = True
+                    for image, state, action in trajectory:
+                        self.data.append((image, state, action))
+                else:
+                    for image, action in trajectory:
+                        self.data.append((image, action))
         
         print(f"Loaded {len(self.trajectories)} trajectories")
         print(f"Total (image, action) pairs: {len(self.data)}")
@@ -44,16 +52,21 @@ class DemonstrationDataset(Dataset):
     
     def __getitem__(self, idx):
         """
-        Get a single (image, action) pair.
+        Get a single (image, action) or (image, state, action) pair.
         
         Args:
             idx: Index of the sample
             
         Returns:
             image: Transformed image tensor
+            state: Proprioceptive state tensor (if available)
             action: Action tensor
         """
-        image, action = self.data[idx]
+        if self.use_proprioception:
+            image, state, action = self.data[idx]
+        else:
+            image, action = self.data[idx]
+            state = None
         
         # Convert numpy array to PIL Image
         if isinstance(image, np.ndarray):
@@ -69,7 +82,14 @@ class DemonstrationDataset(Dataset):
         # Convert action to tensor
         action = torch.FloatTensor(action)
         
-        return image, action
+        # Convert state to tensor if available
+        if state is not None:
+            state = torch.FloatTensor(state)
+        
+        if self.use_proprioception:
+            return image, state, action
+        else:
+            return image, action
 
 
 def get_clean_transform():

@@ -8,6 +8,7 @@ import numpy as np
 import argparse
 import os
 import pybullet as p
+from PIL import Image
 
 from panda_gym.envs import PandaPickAndPlaceEnv
 from policy import load_policy
@@ -138,6 +139,10 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     success_count = 0
     total_reward = 0.0
     
+    # Store trajectories for visualization (store first few episodes)
+    trajectories_for_viz = []
+    max_viz_episodes = min(5, n_episodes)  # Store first 5 episodes for visualization
+    
     print(f"\nEvaluating policy for {n_episodes} episodes...")
     
     # Add corruption once before episodes (if it persists across resets)
@@ -155,30 +160,64 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         done = False
         episode_reward = 0.0
         steps = 0
+        episode_images = []  # Store images for this episode
+        
         while not done and steps < max_steps:
             # Render to get image
             image = env.render()
             
-            # Preprocess image
-            from PIL import Image
+            # Store raw image for visualization (before transform)
+            if episode < max_viz_episodes:
+                if isinstance(image, np.ndarray):
+                    if image.dtype != np.uint8:
+                        image_copy = (image * 255).astype(np.uint8)
+                    else:
+                        image_copy = image.copy()
+                    episode_images.append(image_copy)
+            
+            # Extract proprioceptive state from observation
+            state_tensor = None
+            if hasattr(policy, 'state_dim') and policy.state_dim > 0:
+                if isinstance(observation, dict):
+                    obs_array = np.array(observation['observation'])
+                    gripper_pos = obs_array[:3]  # end-effector position
+                    gripper_width = obs_array[6] if len(obs_array) > 6 else 0.0  # finger opening
+                else:
+                    obs_array = np.array(observation)
+                    gripper_pos = obs_array[:3] if len(obs_array) >= 3 else np.zeros(3)
+                    gripper_width = obs_array[6] if len(obs_array) > 6 else 0.0
+                
+                # Concatenate proprioceptive state: [gripper_pos(3), gripper_width(1)] = 4 dims
+                proprio_state = np.concatenate([gripper_pos, [gripper_width]])
+                state_tensor = torch.FloatTensor(proprio_state).unsqueeze(0).to(device)
+            
+            # Preprocess image for policy
             if isinstance(image, np.ndarray):
                 if image.dtype != np.uint8:
                     image = (image * 255).astype(np.uint8)
-                image = Image.fromarray(image)
+                image_pil = Image.fromarray(image)
             
-            image_tensor = transform(image).unsqueeze(0).to(device)
+            image_tensor = transform(image_pil).unsqueeze(0).to(device)
             
             # Get action from policy
             with torch.no_grad():
-                action = policy(image_tensor)
+                action = policy(image_tensor, state_tensor)
                 action = action.cpu().numpy()[0]
             
             # Step environment
             next_observation, reward, terminated, truncated, info = env.step(action)
+            
+            # Debug: print action stats for first episode
+            if episode == 0 and steps < 5:
+                print(f"  Step {steps}: action = {action}, reward = {reward:.3f}")
             done = terminated or truncated
             observation = next_observation
             episode_reward += reward
             steps += 1
+        
+        # Store trajectory for visualization
+        if episode < max_viz_episodes and len(episode_images) > 0:
+            trajectories_for_viz.append(episode_images)
         
         # Check success
         if info.get('is_success', False) or episode_reward > 0:
@@ -205,7 +244,99 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     print(f"  Average Reward: {avg_reward:.4f}")
     print(f"{'='*50}")
     
+    # Create preview images from evaluation episodes
+    if len(trajectories_for_viz) > 0:
+        print(f"\nCreating preview images from first {len(trajectories_for_viz)} episodes...")
+        os.makedirs('eval_previews', exist_ok=True)
+        
+        for ep_idx, trajectory in enumerate(trajectories_for_viz):
+            create_eval_preview(trajectory, 
+                              f'eval_previews/episode_{ep_idx+1:03d}.png',
+                              grid_size=(4, 4))
+        print(f"Saved preview images to eval_previews/ directory")
+    
     return success_rate, avg_reward
+
+
+def create_eval_preview(images, output_file, grid_size=(4, 4)):
+    """
+    Create a preview grid image from evaluation episode images.
+    Similar to create_preview.py but works with a list of images directly.
+    
+    Args:
+        images: List of numpy arrays (images from the episode)
+        output_file: Path to save the preview image
+        grid_size: Tuple of (rows, cols) for the grid (default: (4, 4))
+    """
+    if len(images) == 0:
+        return
+    
+    grid_rows, grid_cols = grid_size
+    total_grid_frames = grid_rows * grid_cols
+    
+    # Select evenly spaced frames from the trajectory
+    num_frames = len(images)
+    if num_frames <= total_grid_frames:
+        # Use all frames if trajectory is shorter than grid
+        selected_indices = list(range(num_frames))
+        # Pad with last frame if needed
+        while len(selected_indices) < total_grid_frames:
+            selected_indices.append(num_frames - 1)
+    else:
+        # Select evenly spaced frames
+        step = num_frames / total_grid_frames
+        selected_indices = [int(i * step) for i in range(total_grid_frames)]
+    
+    # Extract and process images
+    processed_images = []
+    for idx in selected_indices[:total_grid_frames]:
+        image = images[idx]
+        
+        # Convert to numpy array if not already
+        if not isinstance(image, np.ndarray):
+            image = np.array(image)
+        
+        # Handle dtype - ensure uint8
+        if image.dtype != np.uint8:
+            if image.dtype == np.float32 or image.dtype == np.float64:
+                if image.max() <= 1.0:
+                    image = (image * 255).astype(np.uint8)
+                else:
+                    image = image.astype(np.uint8)
+            else:
+                image = image.astype(np.uint8)
+        
+        # Handle image shape
+        if len(image.shape) == 2:
+            # Grayscale, convert to RGB
+            image = np.stack([image] * 3, axis=-1)
+        elif len(image.shape) == 3:
+            if image.shape[2] == 4:
+                # RGBA, convert to RGB
+                image = image[:, :, :3]
+            elif image.shape[2] != 3:
+                raise ValueError(f"Unexpected image shape: {image.shape}, expected (H, W, 3) or (H, W, 4)")
+        else:
+            raise ValueError(f"Unexpected image shape: {image.shape}, expected 2D or 3D array")
+        
+        processed_images.append(image)
+    
+    # Create grid
+    img_height, img_width = processed_images[0].shape[:2]
+    grid_image = np.zeros((grid_rows * img_height, grid_cols * img_width, 3), dtype=np.uint8)
+    
+    for i, img in enumerate(processed_images):
+        row = i // grid_cols
+        col = i % grid_cols
+        y_start = row * img_height
+        y_end = y_start + img_height
+        x_start = col * img_width
+        x_end = x_start + img_width
+        grid_image[y_start:y_end, x_start:x_end] = img
+    
+    # Save image
+    pil_image = Image.fromarray(grid_image)
+    pil_image.save(output_file)
 
 
 if __name__ == '__main__':

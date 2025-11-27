@@ -50,11 +50,17 @@ def create_preview_grid(demonstrations_file, output_file, trajectory_idx=0, grid
         selected_indices = [int(i * step) for i in range(total_grid_frames)]
     
     # Extract images - following data_collection.py format:
-    # trajectory.append((np.array(image), np.array(action)))
+    # Old format: trajectory.append((np.array(image), np.array(action)))
+    # New format with proprioception: trajectory.append((np.array(image), np.array(proprio_state), np.array(action)))
     # where image comes from env.render() with render_mode='rgb_array', render_width=84, render_height=84
     images = []
     for idx in selected_indices[:total_grid_frames]:
-        image, _ = trajectory[idx]
+        frame = trajectory[idx]
+        # Handle both old format (image, action) and new format (image, state, action)
+        if len(frame) == 3:
+            image, _, _ = frame  # New format with proprioception
+        else:
+            image, _ = frame  # Old format without proprioception
         
         # Convert to numpy array if not already (should already be from data_collection.py)
         if not isinstance(image, np.ndarray):
