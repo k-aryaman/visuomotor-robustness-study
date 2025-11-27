@@ -16,7 +16,7 @@ from data import DemonstrationDataset, get_clean_transform, get_pixel_aug_transf
 
 def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3, 
                  demonstrations_file='demonstrations.pkl', device='cuda', backbone_type='resnet',
-                 resume_from_checkpoint=None):
+                 resume_from_checkpoint=None, weight_decay=1e-4, lr_decay=0.95, output_dir=None):
     """
     Train a behavior cloning policy.
     
@@ -31,6 +31,15 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
     """
     device = torch.device(device if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
+    
+    # Set up output directory
+    if output_dir is None:
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = f"training_runs/{regime}_{backbone_type}_{timestamp}"
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.join(output_dir, 'models'), exist_ok=True)
+    print(f"Output directory: {output_dir}")
     
     # Get appropriate transform
     if regime == 'clean':
@@ -61,9 +70,21 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
     policy = VisuomotorBCPolicy(image_size=(84, 84), action_dim=4, backbone_type=backbone_type, state_dim=state_dim)
     policy.to(device)
     
-    # Loss and optimizer
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(policy.parameters(), lr=lr)
+    # Loss and optimizer with weight decay (L2 regularization)
+    # Use Huber loss (smooth L1) - less sensitive to outliers than MSE, helps with action magnitude
+    # Also supports magnitude-weighted loss if needed
+    use_weighted_loss = True  # Set to False to use standard Huber loss
+    if use_weighted_loss:
+        criterion = nn.SmoothL1Loss(reduction='none')  # Huber loss, get per-sample loss
+    else:
+        criterion = nn.SmoothL1Loss()  # Standard Huber loss
+    optimizer = optim.Adam(policy.parameters(), lr=lr, weight_decay=weight_decay)
+    
+    # Learning rate scheduler (ReduceLROnPlateau - reduces LR when loss plateaus)
+    # This is better than fixed exponential decay as it adapts to actual training progress
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=3, min_lr=1e-6
+    )
     
     # Resume from checkpoint if provided
     start_epoch = 0
@@ -104,7 +125,20 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
             predicted_actions = policy(images, states)
             
             # Compute loss
-            loss = criterion(predicted_actions, actions)
+            if use_weighted_loss:
+                # Per-sample loss for weighting
+                per_sample_loss = criterion(predicted_actions, actions)  # Shape: (batch_size, action_dim)
+                
+                # Weight loss by expert action magnitude to encourage matching large actions
+                # This helps prevent the model from learning overly conservative small actions
+                expert_action_mags = torch.norm(actions[:, :3], dim=1, keepdim=True)  # XYZ magnitude
+                # Scale weights: small actions get weight 1.0, large actions get weight up to 3.0
+                action_weights = 1.0 + 2.0 * expert_action_mags  # Range: [1.0, 3.0]
+                # Apply weights to loss (expand to match action_dim)
+                loss = (per_sample_loss * action_weights.unsqueeze(1)).mean()
+            else:
+                # Standard loss
+                loss = criterion(predicted_actions, actions)
             
             # Backward pass
             loss.backward()
@@ -119,13 +153,20 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
                 print(f"Epoch {epoch + 1}/{n_epochs}, Batch {batch_idx + 1}/{total_batches}, Current Avg Loss: {current_avg:.6f}", flush=True)
         
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-        print(f"Epoch {epoch + 1}/{n_epochs}, Average Loss: {avg_loss:.6f}", flush=True)
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Epoch {epoch + 1}/{n_epochs}, Average Loss: {avg_loss:.6f}, LR: {current_lr:.6f}", flush=True)
+        
+        # Update learning rate (ReduceLROnPlateau needs the loss value)
+        old_lr = current_lr
+        scheduler.step(avg_loss)
+        new_lr = optimizer.param_groups[0]['lr']
+        if new_lr < old_lr:
+            print(f"  -> Learning rate reduced from {old_lr:.6f} to {new_lr:.6f}", flush=True)
         
         # Save checkpoint after each epoch
-        os.makedirs('models', exist_ok=True)
         # Remove .pth extension from model_name if present, then add epoch and .pth
         checkpoint_name = model_name.replace('.pth', '') if model_name.endswith('.pth') else model_name
-        checkpoint_path = os.path.join('models', f'{checkpoint_name}_epoch_{epoch + 1}.pth')
+        checkpoint_path = os.path.join(output_dir, 'models', f'{checkpoint_name}_epoch_{epoch + 1}.pth')
         checkpoint = {
             'state_dict': policy.state_dict(),
             'backbone_type': backbone_type,
@@ -148,8 +189,7 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
         print(f"Saved checkpoint: {checkpoint_path}", flush=True)
     
     # Save final model with metadata
-    os.makedirs('models', exist_ok=True)
-    model_path = os.path.join('models', model_name)
+    model_path = os.path.join(output_dir, 'models', model_name)
     # Save state_dict with metadata for easier loading
     checkpoint = {
         'state_dict': policy.state_dict(),
@@ -191,6 +231,12 @@ if __name__ == '__main__':
                        help='Backbone architecture (resnet, vit, or cnn)')
     parser.add_argument('--resume', type=str, default=None,
                        help='Path to checkpoint to resume from (e.g., models/policy_clean_resnet_epoch_22.pth)')
+    parser.add_argument('--weight_decay', type=float, default=1e-4,
+                       help='Weight decay (L2 regularization) coefficient (default: 1e-4)')
+    parser.add_argument('--lr_decay', type=float, default=0.95,
+                       help='[DEPRECATED] Not used with ReduceLROnPlateau scheduler. LR reduces automatically when loss plateaus.')
+    parser.add_argument('--output_dir', type=str, default=None,
+                       help='Output directory for models and logs (default: creates timestamped directory)')
     
     args = parser.parse_args()
     
@@ -202,6 +248,9 @@ if __name__ == '__main__':
         demonstrations_file=args.data,
         device=args.device,
         backbone_type=args.backbone,
-        resume_from_checkpoint=args.resume
+        resume_from_checkpoint=args.resume,
+        weight_decay=args.weight_decay,
+        lr_decay=args.lr_decay,
+        output_dir=args.output_dir
     )
 

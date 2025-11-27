@@ -61,3 +61,190 @@ Epoch 5/20, Batch 200/535, Current Avg Loss: 0.089684
 Epoch 5/20, Batch 250/535, Current Avg Loss: 0.087960
 Epoch 5/20, Batch 300/535, Current Avg Loss: 0.087606
 Epoch 5/20, Batch 350/535, Current Avg Loss: 0.087165
+Epoch 5/20, Batch 400/535, Current Avg Loss: 0.086685
+Epoch 5/20, Batch 450/535, Current Avg Loss: 0.086576
+Epoch 5/20, Batch 500/535, Current Avg Loss: 0.085946
+Epoch 5/20, Average Loss: 0.086365
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_5.pth
+Epoch 6/20, Batch 50/535, Current Avg Loss: 0.083400
+Epoch 6/20, Batch 100/535, Current Avg Loss: 0.082257
+Epoch 6/20, Batch 150/535, Current Avg Loss: 0.082573
+Epoch 6/20, Batch 200/535, Current Avg Loss: 0.081683
+Epoch 6/20, Batch 250/535, Current Avg Loss: 0.081154
+Epoch 6/20, Batch 300/535, Current Avg Loss: 0.080775
+Epoch 6/20, Batch 350/535, Current Avg Loss: 0.080275
+Epoch 6/20, Batch 400/535, Current Avg Loss: 0.080214
+Epoch 6/20, Batch 450/535, Current Avg Loss: 0.080756
+Epoch 6/20, Batch 500/535, Current Avg Loss: 0.080515
+Epoch 6/20, Average Loss: 0.079796
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_6.pth
+Epoch 7/20, Batch 50/535, Current Avg Loss: 0.078547
+Epoch 7/20, Batch 100/535, Current Avg Loss: 0.078647
+Epoch 7/20, Batch 150/535, Current Avg Loss: 0.077092
+Epoch 7/20, Batch 200/535, Current Avg Loss: 0.079393
+Epoch 7/20, Batch 250/535, Current Avg Loss: 0.079341
+Epoch 7/20, Batch 300/535, Current Avg Loss: 0.079093
+Epoch 7/20, Batch 350/535, Current Avg Loss: 0.077630
+Epoch 7/20, Batch 400/535, Current Avg Loss: 0.076833
+Epoch 7/20, Batch 450/535, Current Avg Loss: 0.076359
+Epoch 7/20, Batch 500/535, Current Avg Loss: 0.076188
+Epoch 7/20, Average Loss: 0.076109
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_7.pth
+Epoch 8/20, Batch 50/535, Current Avg Loss: 0.071179
+Epoch 8/20, Batch 100/535, Current Avg Loss: 0.070540
+Epoch 8/20, Batch 150/535, Current Avg Loss: 0.070982
+Epoch 8/20, Batch 200/535, Current Avg Loss: 0.071321
+Epoch 8/20, Batch 250/535, Current Avg Loss: 0.071791
+Epoch 8/20, Batch 300/535, Current Avg Loss: 0.071497
+Epoch 8/20, Batch 350/535, Current Avg Loss: 0.072061
+Epoch 8/20, Batch 400/535, Current Avg Loss: 0.071912
+Epoch 8/20, Batch 450/535, Current Avg Loss: 0.071914
+Epoch 8/20, Batch 500/535, Current Avg Loss: 0.072346
+Epoch 8/20, Average Loss: 0.072175
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_8.pth
+Epoch 9/20, Batch 50/535, Current Avg Loss: 0.071252
+Epoch 9/20, Batch 100/535, Current Avg Loss: 0.069229
+Epoch 9/20, Batch 150/535, Current Avg Loss: 0.070047
+Epoch 9/20, Batch 200/535, Current Avg Loss: 0.069690
+Epoch 9/20, Batch 250/535, Current Avg Loss: 0.069715
+Epoch 9/20, Batch 300/535, Current Avg Loss: 0.070186
+Epoch 9/20, Batch 350/535, Current Avg Loss: 0.070185
+Epoch 9/20, Batch 400/535, Current Avg Loss: 0.070033
+Epoch 9/20, Batch 450/535, Current Avg Loss: 0.069735
+Epoch 9/20, Batch 500/535, Current Avg Loss: 0.069505
+Epoch 9/20, Average Loss: 0.069482
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_9.pth
+Epoch 10/20, Batch 50/535, Current Avg Loss: 0.065289
+Epoch 10/20, Batch 100/535, Current Avg Loss: 0.064643
+Epoch 10/20, Batch 150/535, Current Avg Loss: 0.064448
+Epoch 10/20, Batch 200/535, Current Avg Loss: 0.065134
+Epoch 10/20, Batch 250/535, Current Avg Loss: 0.065525
+Epoch 10/20, Batch 300/535, Current Avg Loss: 0.065467
+Epoch 10/20, Batch 350/535, Current Avg Loss: 0.066420
+Epoch 10/20, Batch 400/535, Current Avg Loss: 0.066296
+Epoch 10/20, Batch 450/535, Current Avg Loss: 0.066085
+Epoch 10/20, Batch 500/535, Current Avg Loss: 0.066096
+Epoch 10/20, Average Loss: 0.066581
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_10.pth
+Epoch 11/20, Batch 50/535, Current Avg Loss: 0.060277
+Epoch 11/20, Batch 100/535, Current Avg Loss: 0.061248
+Epoch 11/20, Batch 150/535, Current Avg Loss: 0.061685
+Epoch 11/20, Batch 200/535, Current Avg Loss: 0.061955
+Epoch 11/20, Batch 250/535, Current Avg Loss: 0.061994
+Epoch 11/20, Batch 300/535, Current Avg Loss: 0.062709
+Epoch 11/20, Batch 350/535, Current Avg Loss: 0.062632
+Epoch 11/20, Batch 400/535, Current Avg Loss: 0.062597
+Epoch 11/20, Batch 450/535, Current Avg Loss: 0.063163
+Epoch 11/20, Batch 500/535, Current Avg Loss: 0.063367
+Epoch 11/20, Average Loss: 0.063408
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_11.pth
+Epoch 12/20, Batch 50/535, Current Avg Loss: 0.055304
+Epoch 12/20, Batch 100/535, Current Avg Loss: 0.057244
+Epoch 12/20, Batch 150/535, Current Avg Loss: 0.057541
+Epoch 12/20, Batch 200/535, Current Avg Loss: 0.057957
+Epoch 12/20, Batch 250/535, Current Avg Loss: 0.058882
+Epoch 12/20, Batch 300/535, Current Avg Loss: 0.059076
+Epoch 12/20, Batch 350/535, Current Avg Loss: 0.058992
+Epoch 12/20, Batch 400/535, Current Avg Loss: 0.059689
+Epoch 12/20, Batch 450/535, Current Avg Loss: 0.059333
+Epoch 12/20, Batch 500/535, Current Avg Loss: 0.059749
+Epoch 12/20, Average Loss: 0.059862
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_12.pth
+Epoch 13/20, Batch 50/535, Current Avg Loss: 0.059136
+Epoch 13/20, Batch 100/535, Current Avg Loss: 0.058433
+Epoch 13/20, Batch 150/535, Current Avg Loss: 0.057057
+Epoch 13/20, Batch 200/535, Current Avg Loss: 0.056899
+Epoch 13/20, Batch 250/535, Current Avg Loss: 0.057298
+Epoch 13/20, Batch 300/535, Current Avg Loss: 0.058180
+Epoch 13/20, Batch 350/535, Current Avg Loss: 0.058102
+Epoch 13/20, Batch 400/535, Current Avg Loss: 0.057968
+Epoch 13/20, Batch 450/535, Current Avg Loss: 0.058667
+Epoch 13/20, Batch 500/535, Current Avg Loss: 0.058846
+Epoch 13/20, Average Loss: 0.058693
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_13.pth
+Epoch 14/20, Batch 50/535, Current Avg Loss: 0.057748
+Epoch 14/20, Batch 100/535, Current Avg Loss: 0.057397
+Epoch 14/20, Batch 150/535, Current Avg Loss: 0.056665
+Epoch 14/20, Batch 200/535, Current Avg Loss: 0.056343
+Epoch 14/20, Batch 250/535, Current Avg Loss: 0.056407
+Epoch 14/20, Batch 300/535, Current Avg Loss: 0.056489
+Epoch 14/20, Batch 350/535, Current Avg Loss: 0.057655
+Epoch 14/20, Batch 400/535, Current Avg Loss: 0.057690
+Epoch 14/20, Batch 450/535, Current Avg Loss: 0.057115
+Epoch 14/20, Batch 500/535, Current Avg Loss: 0.057263
+Epoch 14/20, Average Loss: 0.057002
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_14.pth
+Epoch 15/20, Batch 50/535, Current Avg Loss: 0.054386
+Epoch 15/20, Batch 100/535, Current Avg Loss: 0.054147
+Epoch 15/20, Batch 150/535, Current Avg Loss: 0.052511
+Epoch 15/20, Batch 200/535, Current Avg Loss: 0.052149
+Epoch 15/20, Batch 250/535, Current Avg Loss: 0.052187
+Epoch 15/20, Batch 300/535, Current Avg Loss: 0.053085
+Epoch 15/20, Batch 350/535, Current Avg Loss: 0.054436
+Epoch 15/20, Batch 400/535, Current Avg Loss: 0.054065
+Epoch 15/20, Batch 450/535, Current Avg Loss: 0.054840
+Epoch 15/20, Batch 500/535, Current Avg Loss: 0.054699
+Epoch 15/20, Average Loss: 0.054774
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_15.pth
+Epoch 16/20, Batch 50/535, Current Avg Loss: 0.052114
+Epoch 16/20, Batch 100/535, Current Avg Loss: 0.052518
+Epoch 16/20, Batch 150/535, Current Avg Loss: 0.052338
+Epoch 16/20, Batch 200/535, Current Avg Loss: 0.052333
+Epoch 16/20, Batch 250/535, Current Avg Loss: 0.051957
+Epoch 16/20, Batch 300/535, Current Avg Loss: 0.052423
+Epoch 16/20, Batch 350/535, Current Avg Loss: 0.053432
+Epoch 16/20, Batch 400/535, Current Avg Loss: 0.053628
+Epoch 16/20, Batch 450/535, Current Avg Loss: 0.053361
+Epoch 16/20, Batch 500/535, Current Avg Loss: 0.053782
+Epoch 16/20, Average Loss: 0.054184
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_16.pth
+Epoch 17/20, Batch 50/535, Current Avg Loss: 0.052759
+Epoch 17/20, Batch 100/535, Current Avg Loss: 0.051714
+Epoch 17/20, Batch 150/535, Current Avg Loss: 0.050700
+Epoch 17/20, Batch 200/535, Current Avg Loss: 0.052004
+Epoch 17/20, Batch 250/535, Current Avg Loss: 0.051974
+Epoch 17/20, Batch 300/535, Current Avg Loss: 0.051701
+Epoch 17/20, Batch 350/535, Current Avg Loss: 0.051643
+Epoch 17/20, Batch 400/535, Current Avg Loss: 0.051545
+Epoch 17/20, Batch 450/535, Current Avg Loss: 0.051332
+Epoch 17/20, Batch 500/535, Current Avg Loss: 0.051340
+Epoch 17/20, Average Loss: 0.050983
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_17.pth
+Epoch 18/20, Batch 50/535, Current Avg Loss: 0.045679
+Epoch 18/20, Batch 100/535, Current Avg Loss: 0.045874
+Epoch 18/20, Batch 150/535, Current Avg Loss: 0.045852
+Epoch 18/20, Batch 200/535, Current Avg Loss: 0.046631
+Epoch 18/20, Batch 250/535, Current Avg Loss: 0.046489
+Epoch 18/20, Batch 300/535, Current Avg Loss: 0.046805
+Epoch 18/20, Batch 350/535, Current Avg Loss: 0.047403
+Epoch 18/20, Batch 400/535, Current Avg Loss: 0.047489
+Epoch 18/20, Batch 450/535, Current Avg Loss: 0.047850
+Epoch 18/20, Batch 500/535, Current Avg Loss: 0.048484
+Epoch 18/20, Average Loss: 0.048726
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_18.pth
+Epoch 19/20, Batch 50/535, Current Avg Loss: 0.047146
+Epoch 19/20, Batch 100/535, Current Avg Loss: 0.046793
+Epoch 19/20, Batch 150/535, Current Avg Loss: 0.048697
+Epoch 19/20, Batch 200/535, Current Avg Loss: 0.048780
+Epoch 19/20, Batch 250/535, Current Avg Loss: 0.048955
+Epoch 19/20, Batch 300/535, Current Avg Loss: 0.049589
+Epoch 19/20, Batch 350/535, Current Avg Loss: 0.049941
+Epoch 19/20, Batch 400/535, Current Avg Loss: 0.049552
+Epoch 19/20, Batch 450/535, Current Avg Loss: 0.049406
+Epoch 19/20, Batch 500/535, Current Avg Loss: 0.049583
+Epoch 19/20, Average Loss: 0.049574
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_19.pth
+Epoch 20/20, Batch 50/535, Current Avg Loss: 0.046000
+Epoch 20/20, Batch 100/535, Current Avg Loss: 0.047024
+Epoch 20/20, Batch 150/535, Current Avg Loss: 0.047103
+Epoch 20/20, Batch 200/535, Current Avg Loss: 0.046652
+Epoch 20/20, Batch 250/535, Current Avg Loss: 0.046520
+Epoch 20/20, Batch 300/535, Current Avg Loss: 0.046231
+Epoch 20/20, Batch 350/535, Current Avg Loss: 0.046136
+Epoch 20/20, Batch 400/535, Current Avg Loss: 0.046314
+Epoch 20/20, Batch 450/535, Current Avg Loss: 0.046448
+Epoch 20/20, Batch 500/535, Current Avg Loss: 0.047506
+Epoch 20/20, Average Loss: 0.047583
+Saved checkpoint: models/policy_clean_resnet.pth_epoch_20.pth
+
+Saved model to models/policy_clean_resnet.pth

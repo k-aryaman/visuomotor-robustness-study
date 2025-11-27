@@ -62,14 +62,16 @@ class VisuomotorBCPolicy(nn.Module):
             self.vit_pos_embed_interpolated = None
             backbone_output_dim = 768
         elif backbone_type == 'cnn':
-            # Simple 4-layer CNN
+            # Simple 4-layer CNN with dropout
             self.backbone = nn.Sequential(
                 # Input: 3 x 84 x 84
                 nn.Conv2d(3, 32, kernel_size=8, stride=4, padding=2),
                 nn.ReLU(),
+                nn.Dropout2d(0.1),  # Dropout after first conv
                 # 32 x 21 x 21
                 nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),
                 nn.ReLU(),
+                nn.Dropout2d(0.1),  # Dropout after second conv
                 # 64 x 11 x 11
                 nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
                 nn.ReLU(),
@@ -84,14 +86,16 @@ class VisuomotorBCPolicy(nn.Module):
         else:
             raise ValueError(f"Unknown backbone_type: {backbone_type}. Must be 'resnet', 'vit', or 'cnn'")
         
-        # MLP head for action prediction
+        # MLP head for action prediction with dropout
         # Input dimension is backbone_output_dim + state_dim (if using proprioception)
         head_input_dim = backbone_output_dim + state_dim
         self.head = nn.Sequential(
             nn.Linear(head_input_dim, feature_dim),
             nn.ReLU(),
+            nn.Dropout(0.2),  # Dropout in MLP head
             nn.Linear(feature_dim, feature_dim),
             nn.ReLU(),
+            nn.Dropout(0.2),  # Dropout in MLP head
             nn.Linear(feature_dim, action_dim),
             nn.Tanh()  # Normalize actions to [-1, 1] range
         )

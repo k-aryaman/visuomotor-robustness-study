@@ -103,7 +103,7 @@ def add_visual_corruption(env, corruption_type='distractor'):
 
 def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100, 
                    device='cuda', image_size=(84, 84), backbone_type=None,
-                   max_steps=200):
+                   max_steps=200, action_scale=1.0):
     """
     Evaluate a trained policy with visual corruption.
     
@@ -139,9 +139,8 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     success_count = 0
     total_reward = 0.0
     
-    # Store trajectories for visualization (store first few episodes)
-    trajectories_for_viz = []
-    max_viz_episodes = min(5, n_episodes)  # Store first 5 episodes for visualization
+    # Store trajectories for visualization with success/failure labels
+    trajectories_for_viz = []  # List of (images, is_success, episode_idx)
     
     print(f"\nEvaluating policy for {n_episodes} episodes...")
     
@@ -149,8 +148,29 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     if corruption_type:
         add_visual_corruption(env, corruption_type=corruption_type)
     
-    for episode in range(n_episodes):
+    episode = 0
+    skipped_episodes = 0
+    max_skip_attempts = 1000  # Prevent infinite loops
+    
+    while episode < n_episodes and skipped_episodes < max_skip_attempts:
         observation, info = env.reset()
+        
+        # Check if object and target positions overlap (trivial success case)
+        if isinstance(observation, dict):
+            object_pos = np.array(observation['achieved_goal'])
+            target_pos = np.array(observation['desired_goal'])
+        else:
+            obs_array = np.array(observation)
+            object_pos = obs_array[7:10] if len(obs_array) >= 10 else np.zeros(3)
+            target_pos = obs_array[10:13] if len(obs_array) >= 13 else np.zeros(3)
+        
+        # Check if object and target are too close (within 2cm threshold)
+        distance = np.linalg.norm(object_pos - target_pos)
+        if distance < 0.02:
+            skipped_episodes += 1
+            if skipped_episodes % 10 == 0:
+                print(f"Skipped {skipped_episodes} trivial episodes (object at target location)...")
+            continue
         
         # Re-add corruption after reset if needed (some environments reset the scene)
         if corruption_type and episode == 0:
@@ -167,13 +187,12 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
             image = env.render()
             
             # Store raw image for visualization (before transform)
-            if episode < max_viz_episodes:
-                if isinstance(image, np.ndarray):
-                    if image.dtype != np.uint8:
-                        image_copy = (image * 255).astype(np.uint8)
-                    else:
-                        image_copy = image.copy()
-                    episode_images.append(image_copy)
+            if isinstance(image, np.ndarray):
+                if image.dtype != np.uint8:
+                    image_copy = (image * 255).astype(np.uint8)
+                else:
+                    image_copy = image.copy()
+                episode_images.append(image_copy)
             
             # Extract proprioceptive state from observation
             state_tensor = None
@@ -204,58 +223,83 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
                 action = policy(image_tensor, state_tensor)
                 action = action.cpu().numpy()[0]
             
+            # Scale actions if needed (to compensate for learned policy being too conservative)
+            if action_scale != 1.0:
+                action = action * action_scale
+                # Clip to valid range after scaling
+                action = np.clip(action, -1.0, 1.0)
+            
+            # Debug: print action stats for first few episodes (before step)
+            if episode < 3:
+                action_magnitude = np.linalg.norm(action[:3])  # Magnitude of xyz movement
+                print(f"  Episode {episode + 1}, Step {steps}: action = {action}, "
+                      f"xyz_magnitude = {action_magnitude:.4f} (scale={action_scale})")
+            
             # Step environment
             next_observation, reward, terminated, truncated, info = env.step(action)
             
-            # Debug: print action stats for first episode
-            if episode == 0 and steps < 5:
-                print(f"  Step {steps}: action = {action}, reward = {reward:.3f}")
+            # Debug: print reward after step
+            if episode < 3:
+                print(f"    -> reward = {reward:.3f}")
             done = terminated or truncated
             observation = next_observation
             episode_reward += reward
             steps += 1
         
-        # Store trajectory for visualization
-        if episode < max_viz_episodes and len(episode_images) > 0:
-            trajectories_for_viz.append(episode_images)
-        
         # Check success
-        if info.get('is_success', False) or episode_reward > 0:
+        is_success = info.get('is_success', False) or episode_reward > 0
+        if is_success:
             success_count += 1
         
-        total_reward += episode_reward
+        # Store trajectory for visualization with success label
+        if len(episode_images) > 0:
+            trajectories_for_viz.append((episode_images, is_success, episode))
         
-        if (episode + 1) % 10 == 0:
-            print(f"Episode {episode + 1}/{n_episodes}, "
-                  f"Success Rate: {success_count / (episode + 1):.2%}")
+        total_reward += episode_reward
+        episode += 1  # Increment episode counter after valid episode
+        
+        if episode % 10 == 0:
+            print(f"Episode {episode}/{n_episodes} (skipped {skipped_episodes} trivial), "
+                  f"Success Rate: {success_count / episode:.2%}")
     
     env.close()
     
     # Print results
-    success_rate = success_count / n_episodes
-    avg_reward = total_reward / n_episodes
+    if episode > 0:
+        success_rate = success_count / episode
+        avg_reward = total_reward / episode
+    else:
+        success_rate = 0.0
+        avg_reward = 0.0
     
     print(f"\n{'='*50}")
     print(f"Evaluation Results:")
     print(f"  Policy: {policy_path}")
     print(f"  Corruption Type: {corruption_type if corruption_type else 'None'}")
-    print(f"  Episodes: {n_episodes}")
-    print(f"  Task Success Rate: {success_rate:.2%} ({success_count}/{n_episodes})")
+    print(f"  Episodes: {episode} (skipped {skipped_episodes} trivial cases)")
+    print(f"  Task Success Rate: {success_rate:.2%} ({success_count}/{episode})")
     print(f"  Average Reward: {avg_reward:.4f}")
     print(f"{'='*50}")
     
+    # Save trajectories with metadata for later visualization
+    eval_trajectories_file = 'eval_trajectories.pkl'
+    import pickle
+    with open(eval_trajectories_file, 'wb') as f:
+        pickle.dump(trajectories_for_viz, f)
+    print(f"\nSaved {len(trajectories_for_viz)} evaluation trajectories to {eval_trajectories_file}")
+    
     # Create preview images from evaluation episodes
     if len(trajectories_for_viz) > 0:
-        print(f"\nCreating preview images from first {len(trajectories_for_viz)} episodes...")
+        print(f"\nCreating preview images from first {min(5, len(trajectories_for_viz))} episodes...")
         os.makedirs('eval_previews', exist_ok=True)
         
-        for ep_idx, trajectory in enumerate(trajectories_for_viz):
+        for ep_idx, (trajectory, _, _) in enumerate(trajectories_for_viz[:5]):
             create_eval_preview(trajectory, 
                               f'eval_previews/episode_{ep_idx+1:03d}.png',
                               grid_size=(4, 4))
         print(f"Saved preview images to eval_previews/ directory")
     
-    return success_rate, avg_reward
+    return success_rate, avg_reward, trajectories_for_viz
 
 
 def create_eval_preview(images, output_file, grid_size=(4, 4)):
@@ -355,17 +399,20 @@ if __name__ == '__main__':
                        help='Backbone architecture (auto-detected from filename if not specified)')
     parser.add_argument('--max_steps', type=int, default=200,
                        help='Max steps per episode during evaluation')
+    parser.add_argument('--action_scale', type=float, default=1.0,
+                       help='Scale factor for actions (default: 1.0, try 2.0-3.0 if actions too small)')
     
     args = parser.parse_args()
     
     corruption_type = None if args.corruption == 'none' else args.corruption
     
-    evaluate_policy(
+    success_rate, avg_reward, _ = evaluate_policy(
         policy_path=args.policy,
         corruption_type=corruption_type,
         n_episodes=args.episodes,
         device=args.device,
         backbone_type=args.backbone,
-        max_steps=args.max_steps
+        max_steps=args.max_steps,
+        action_scale=args.action_scale
     )
 
