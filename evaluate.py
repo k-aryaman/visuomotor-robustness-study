@@ -102,7 +102,7 @@ def add_visual_corruption(env, corruption_type='distractor'):
 
 def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100, 
                    device='cuda', image_size=(84, 84), backbone_type=None,
-                   max_steps=200, eval_trajectories_file='eval_trajectories_pick_and_place.pkl'):
+                   max_steps=200, eval_trajectories_file=''):
     """
     Evaluate a trained policy with visual corruption.
     
@@ -297,7 +297,7 @@ if __name__ == '__main__':
                        help='Backbone architecture (auto-detected from filename if not specified)')
     parser.add_argument('--max_steps', type=int, default=200,
                        help='Max steps per episode during evaluation')
-    parser.add_argument('--eval_trajectories_file', type=str, default='eval_trajectories_pick_and_place.pkl',
+    parser.add_argument('--eval_trajectories_file', type=str, default='',
                        help='Output file path for evaluation trajectories pickle file')
     
     args = parser.parse_args()
