@@ -102,7 +102,7 @@ def add_visual_corruption(env, corruption_type='distractor'):
 
 def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100, 
                    device='cuda', image_size=(84, 84), backbone_type=None,
-                   max_steps=200):
+                   max_steps=200, eval_trajectories_file='eval_trajectories_pick_and_place.pkl'):
     """
     Evaluate a trained policy with visual corruption.
     
@@ -114,6 +114,8 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         image_size: Size of input images
         backbone_type: Backbone type used in the policy ('resnet', 'vit', or 'cnn'). 
                        If None, will be auto-detected from filename or checkpoint.
+        max_steps: Maximum steps per episode
+        eval_trajectories_file: Output file path for evaluation trajectories pickle file
     """
     device = torch.device(device if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -139,6 +141,10 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     total_reward = 0.0
     failure_distances = []  # Track distances for failed trials
     
+    # Store trajectories for visualization: list of (images, is_success, episode_idx)
+    # Format matches what visualize_eval_trajectories.py expects
+    trajectories_for_viz = []
+    
     print(f"\nEvaluating policy for {n_episodes} episodes...")
     
     # Add corruption once before episodes (if it persists across resets)
@@ -156,11 +162,21 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         done = False
         episode_reward = 0.0
         steps = 0
+        episode_images = []  # Store images for this episode
+        
         while not done and steps < max_steps:
             # Render to get image
             image = env.render()
             
-            # Preprocess image
+            # Store raw image for visualization (before transform)
+            if isinstance(image, np.ndarray):
+                if image.dtype != np.uint8:
+                    image_copy = (image * 255).astype(np.uint8)
+                else:
+                    image_copy = image.copy()
+                episode_images.append(image_copy)
+            
+            # Preprocess image for policy
             from PIL import Image
             if isinstance(image, np.ndarray):
                 if image.dtype != np.uint8:
@@ -211,6 +227,11 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
             # Track distances for failed trials
             failure_distances.append(final_distance)
         
+        # Store trajectory for visualization: format expected by visualize_eval_trajectories.py
+        # (images, is_success, episode_idx)
+        if len(episode_images) > 0:
+            trajectories_for_viz.append((episode_images, is_success, episode))
+        
         total_reward += episode_reward
         
         if (episode + 1) % 10 == 0:
@@ -251,7 +272,13 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         print(f"    Max Distance: {max_failure_distance:.4f} m")
     print(f"{'='*50}")
     
-    return success_rate, avg_reward
+    # Save trajectories with metadata for later visualization
+    import pickle
+    with open(eval_trajectories_file, 'wb') as f:
+        pickle.dump(trajectories_for_viz, f)
+    print(f"\nSaved {len(trajectories_for_viz)} evaluation trajectories to {eval_trajectories_file}")
+    
+    return success_rate, avg_reward, trajectories_for_viz
 
 
 if __name__ == '__main__':
@@ -270,17 +297,20 @@ if __name__ == '__main__':
                        help='Backbone architecture (auto-detected from filename if not specified)')
     parser.add_argument('--max_steps', type=int, default=200,
                        help='Max steps per episode during evaluation')
+    parser.add_argument('--eval_trajectories_file', type=str, default='eval_trajectories_pick_and_place.pkl',
+                       help='Output file path for evaluation trajectories pickle file')
     
     args = parser.parse_args()
     
     corruption_type = None if args.corruption == 'none' else args.corruption
     
-    evaluate_policy(
+    success_rate, avg_reward, _ = evaluate_policy(
         policy_path=args.policy,
         corruption_type=corruption_type,
         n_episodes=args.episodes,
         device=args.device,
         backbone_type=args.backbone,
-        max_steps=args.max_steps
+        max_steps=args.max_steps,
+        eval_trajectories_file=args.eval_trajectories_file,
     )
 
