@@ -279,6 +279,8 @@ def load_policy(model_path, image_size=(84, 84), action_dim=3, backbone_type=Non
     # Handle both old format (just state_dict) and new format (with metadata)
     state_dim = 0  # Default: no proprioception
     use_spherical = False  # Default: Cartesian coordinates
+    use_gru = False  # Default: no GRU
+    gru_hidden_dim = 128  # Default GRU hidden dimension
     if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
         state_dict = checkpoint['state_dict']
         # Use metadata if available (overrides filename inference)
@@ -296,12 +298,37 @@ def load_policy(model_path, image_size=(84, 84), action_dim=3, backbone_type=Non
             use_spherical = checkpoint['use_spherical']
         elif 'metadata' in checkpoint and 'use_spherical' in checkpoint['metadata']:
             use_spherical = checkpoint['metadata'].get('use_spherical', False)
+        # Get use_gru from checkpoint if available
+        if 'use_gru' in checkpoint:
+            use_gru = checkpoint['use_gru']
+        elif 'metadata' in checkpoint and 'use_gru' in checkpoint['metadata']:
+            use_gru = checkpoint['metadata'].get('use_gru', False)
+        # Get gru_hidden_dim from checkpoint if available
+        if 'gru_hidden_dim' in checkpoint:
+            gru_hidden_dim = checkpoint['gru_hidden_dim']
+        elif 'metadata' in checkpoint and 'gru_hidden_dim' in checkpoint['metadata']:
+            gru_hidden_dim = checkpoint['metadata'].get('gru_hidden_dim', 128)
     else:
         # Old format: just state_dict
         state_dict = checkpoint
     
+    # Auto-detect GRU from state_dict if not in checkpoint metadata
+    # Check if GRU weights are present in state_dict
+    if not use_gru:
+        gru_keys = [k for k in state_dict.keys() if 'gru' in k.lower()]
+        if gru_keys:
+            use_gru = True
+            print(f"Detected GRU in checkpoint (keys: {len(gru_keys)} GRU parameters)")
+            # Infer gru_hidden_dim from head input size
+            if 'head.0.weight' in state_dict:
+                head_input_size = state_dict['head.0.weight'].shape[1]
+                if head_input_size != (512 + state_dim):  # If not backbone+state, must be GRU output
+                    gru_hidden_dim = head_input_size
+                    print(f"Inferred gru_hidden_dim={gru_hidden_dim} from head input size")
+    
     model = VisuomotorBCPolicy(image_size=image_size, action_dim=action_dim, 
-                               backbone_type=backbone_type, use_resnet=None, state_dim=state_dim)
+                               backbone_type=backbone_type, use_resnet=None, 
+                               state_dim=state_dim, use_gru=use_gru, gru_hidden_dim=gru_hidden_dim)
     
     # For ViT, remove interpolated pos_embedding from state_dict if present
     # (we'll interpolate it on the fly during forward pass)

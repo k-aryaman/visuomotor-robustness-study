@@ -228,9 +228,10 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
     # This is better than fixed exponential decay as it adapts to actual training progress
     # threshold: minimum relative change to qualify as an improvement (0.01 = 1% improvement)
     # With threshold=0.01 and threshold_mode='rel', improvements < 1% don't count
-    # patience=2: reduce LR after 2 epochs without meaningful improvement
+    # patience=3: reduce LR after 3 epochs without meaningful improvement
+    # factor=0.8: reduce LR to 80% of current (gentler, more gradual reduction)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=2, min_lr=1e-6, 
+        optimizer, mode='min', factor=0.8, patience=3, min_lr=1e-6, 
         threshold=0.01, threshold_mode='rel'  # 1% relative improvement threshold
     )
     
@@ -309,15 +310,28 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
                     per_sample_loss = criterion(predicted_for_loss, actions_for_loss)  # (batch, chunk_size, action_dim)
                     
                     if use_spherical_coords:
+                        # Normalize loss by dimension ranges to balance magnitude vs angle errors
+                        dim_ranges = torch.tensor([1.0, np.pi, 2.0 * np.pi], device=per_sample_loss.device)
+                        per_sample_loss_normalized = per_sample_loss / dim_ranges.unsqueeze(0).unsqueeze(0)  # (batch, chunk_size, action_dim)
+                        
                         # Weight by magnitude (first dimension in spherical)
                         expert_action_mags = actions_for_loss[..., 0:1]  # (batch, chunk_size, 1)
+                        action_weights = 1.0 + 2.0 * expert_action_mags  # (batch, chunk_size, 1)
+                        loss = (per_sample_loss_normalized * action_weights).mean()
                     else:
                         # Weight by action magnitude (all dimensions for push task)
                         expert_action_mags = torch.norm(actions_for_loss, dim=2, keepdim=True)  # (batch, chunk_size, 1)
-                    action_weights = 1.0 + 2.0 * expert_action_mags  # (batch, chunk_size, 1)
-                    loss = (per_sample_loss * action_weights).mean()
+                        action_weights = 1.0 + 2.0 * expert_action_mags  # (batch, chunk_size, 1)
+                        loss = (per_sample_loss * action_weights).mean()
                 else:
-                    loss = criterion(predicted_for_loss, actions_for_loss)
+                    if use_spherical_coords:
+                        # Normalize loss by dimension ranges even without weighting
+                        dim_ranges = torch.tensor([1.0, np.pi, 2.0 * np.pi], device=predicted_for_loss.device)
+                        per_sample_loss = criterion(predicted_for_loss, actions_for_loss)
+                        per_sample_loss_normalized = per_sample_loss / dim_ranges.unsqueeze(0).unsqueeze(0)
+                        loss = per_sample_loss_normalized.mean()
+                    else:
+                        loss = criterion(predicted_for_loss, actions_for_loss)
             else:
                 # Standard BC: single action prediction
                 if use_proprioception:
@@ -364,18 +378,34 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
                     per_sample_loss = criterion(predicted_for_loss, actions_for_loss)  # Shape: (batch_size, action_dim)
                     
                     if use_spherical_coords:
+                        # Normalize loss by dimension ranges to balance magnitude vs angle errors
+                        # Magnitude: [0, 1], Theta: [0, π], Phi: [-π, π]
+                        # Normalize each dimension by its range so they contribute equally
+                        dim_ranges = torch.tensor([1.0, np.pi, 2.0 * np.pi], device=per_sample_loss.device)  # [magnitude_range, theta_range, phi_range]
+                        per_sample_loss_normalized = per_sample_loss / dim_ranges.unsqueeze(0)  # Normalize by range
+                        
                         # Weight by magnitude (first dimension in spherical)
                         expert_action_mags = actions_for_loss[..., 0:1]  # (batch_size, 1)
+                        action_weights = 1.0 + 2.0 * expert_action_mags  # Range: [1.0, 3.0]
+                        # Apply weights to normalized loss
+                        loss = (per_sample_loss_normalized * action_weights.unsqueeze(1)).mean()
                     else:
                         # Weight loss by expert action magnitude to encourage matching large actions
                         expert_action_mags = torch.norm(actions_for_loss, dim=1, keepdim=True)  # Action magnitude (3D for push)
-                    # Scale weights: small actions get weight 1.0, large actions get weight up to 3.0
-                    action_weights = 1.0 + 2.0 * expert_action_mags  # Range: [1.0, 3.0]
-                    # Apply weights to loss (expand to match action_dim)
-                    loss = (per_sample_loss * action_weights.unsqueeze(1)).mean()
+                        # Scale weights: small actions get weight 1.0, large actions get weight up to 3.0
+                        action_weights = 1.0 + 2.0 * expert_action_mags  # Range: [1.0, 3.0]
+                        # Apply weights to loss (expand to match action_dim)
+                        loss = (per_sample_loss * action_weights.unsqueeze(1)).mean()
                 else:
-                    # Standard loss
-                    loss = criterion(predicted_for_loss, actions_for_loss)
+                    if use_spherical_coords:
+                        # Normalize loss by dimension ranges even without weighting
+                        dim_ranges = torch.tensor([1.0, np.pi, 2.0 * np.pi], device=predicted_for_loss.device)
+                        per_sample_loss = criterion(predicted_for_loss, actions_for_loss)
+                        per_sample_loss_normalized = per_sample_loss / dim_ranges.unsqueeze(0)
+                        loss = per_sample_loss_normalized.mean()
+                    else:
+                        # Standard loss
+                        loss = criterion(predicted_for_loss, actions_for_loss)
             
             # Backward pass
             loss.backward()
@@ -428,13 +458,26 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
                     if use_weighted_loss:
                         per_sample_loss = criterion(predicted_for_loss, actions_for_loss)
                         if use_spherical_coords:
+                            # Normalize loss by dimension ranges
+                            dim_ranges = torch.tensor([1.0, np.pi, 2.0 * np.pi], device=per_sample_loss.device)
+                            per_sample_loss_normalized = per_sample_loss / dim_ranges.unsqueeze(0).unsqueeze(0)
+                            
                             expert_action_mags = actions_for_loss[..., 0:1]
+                            action_weights = 1.0 + 2.0 * expert_action_mags
+                            batch_loss = (per_sample_loss_normalized * action_weights).mean()
                         else:
                             expert_action_mags = torch.norm(actions_for_loss, dim=2, keepdim=True)
-                        action_weights = 1.0 + 2.0 * expert_action_mags
-                        batch_loss = (per_sample_loss * action_weights).mean()
+                            action_weights = 1.0 + 2.0 * expert_action_mags
+                            batch_loss = (per_sample_loss * action_weights).mean()
                     else:
-                        batch_loss = criterion(predicted_for_loss, actions_for_loss)
+                        if use_spherical_coords:
+                            # Normalize loss by dimension ranges
+                            dim_ranges = torch.tensor([1.0, np.pi, 2.0 * np.pi], device=predicted_for_loss.device)
+                            per_sample_loss = criterion(predicted_for_loss, actions_for_loss)
+                            per_sample_loss_normalized = per_sample_loss / dim_ranges.unsqueeze(0).unsqueeze(0)
+                            batch_loss = per_sample_loss_normalized.mean()
+                        else:
+                            batch_loss = criterion(predicted_for_loss, actions_for_loss)
                 else:
                     if use_proprioception:
                         images, states, actions = val_batch
@@ -511,6 +554,8 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
             'val_loss': avg_val_loss,
             'use_act': use_act,
             'use_spherical': use_spherical_coords,
+            'use_gru': use_gru,
+            'gru_hidden_dim': gru_hidden_dim,
             'metadata': {
                 'backbone_type': backbone_type,
                 'regime': regime,
@@ -522,6 +567,8 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
                 'val_loss': avg_val_loss,
                 'use_act': use_act,
                 'use_spherical': use_spherical_coords,
+                'use_gru': use_gru,
+                'gru_hidden_dim': gru_hidden_dim,
             }
         }
         if use_act:
@@ -551,6 +598,8 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
         'state_dim': state_dim,
         'use_act': use_act,
         'use_spherical': use_spherical_coords,
+        'use_gru': use_gru,
+        'gru_hidden_dim': gru_hidden_dim,
         'best_val_loss': best_val_loss,
         'best_epoch': best_epoch,
         'metadata': {
@@ -561,6 +610,8 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
             'state_dim': state_dim,
             'use_act': use_act,
             'use_spherical': use_spherical_coords,
+            'use_gru': use_gru,
+            'gru_hidden_dim': gru_hidden_dim,
             'best_val_loss': best_val_loss,
             'best_epoch': best_epoch,
         }

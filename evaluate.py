@@ -263,8 +263,11 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
             # Debug: print action stats for first few episodes (before step)
             if episode < 3:
                 action_magnitude = np.linalg.norm(action)  # Magnitude of action (3D for push)
-                print(f"  Episode {episode + 1}, Step {steps}: spherical = {action_spherical_scaled}, "
-                      f"cartesian = {action}, magnitude = {action_magnitude:.4f}")
+                if use_spherical:
+                    print(f"  Episode {episode + 1}, Step {steps}: spherical = {action_spherical_scaled}, "
+                          f"cartesian = {action}, magnitude = {action_magnitude:.4f}")
+                else:
+                    print(f"  Episode {episode + 1}, Step {steps}: cartesian = {action}, magnitude = {action_magnitude:.4f}")
             
             # Step environment (actions are 3D Cartesian for push task)
             next_observation, reward, terminated, truncated, info = env.step(action)
