@@ -139,9 +139,10 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     # Evaluation loop
     success_count = 0
     total_reward = 0.0
+    failure_distances = []  # Track distances for failed trials
     
     # Store trajectories for visualization with success/failure labels
-    trajectories_for_viz = []  # List of (images, is_success, episode_idx)
+    trajectories_for_viz = []  # List of (images, is_success, episode_idx, final_distance)
     
     print(f"\nEvaluating policy for {n_episodes} episodes...")
     
@@ -282,12 +283,28 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         
         # Check success
         is_success = info.get('is_success', False) or episode_reward > 0
+        
+        # Get final object and target positions for distance calculation
+        if isinstance(observation, dict):
+            final_object_pos = np.array(observation['achieved_goal'])
+            final_target_pos = np.array(observation['desired_goal'])
+        else:
+            obs_array = np.array(observation)
+            final_object_pos = obs_array[7:10] if len(obs_array) >= 10 else np.zeros(3)
+            final_target_pos = obs_array[10:13] if len(obs_array) >= 13 else np.zeros(3)
+        
+        # Calculate final distance from target
+        final_distance = np.linalg.norm(final_object_pos - final_target_pos)
+        
         if is_success:
             success_count += 1
+        else:
+            # Track distances for failed trials
+            failure_distances.append(final_distance)
         
-        # Store trajectory for visualization with success label
+        # Store trajectory for visualization with success label and final distance
         if len(episode_images) > 0:
-            trajectories_for_viz.append((episode_images, is_success, episode))
+            trajectories_for_viz.append((episode_images, is_success, episode, final_distance))
         
         total_reward += episode_reward
         episode += 1  # Increment episode counter after valid episode
@@ -306,6 +323,19 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         success_rate = 0.0
         avg_reward = 0.0
     
+    # Calculate failure distance statistics
+    failure_count = episode - success_count
+    if failure_count > 0 and len(failure_distances) > 0:
+        avg_failure_distance = np.mean(failure_distances)
+        min_failure_distance = np.min(failure_distances)
+        max_failure_distance = np.max(failure_distances)
+        median_failure_distance = np.median(failure_distances)
+    else:
+        avg_failure_distance = 0.0
+        min_failure_distance = 0.0
+        max_failure_distance = 0.0
+        median_failure_distance = 0.0
+    
     print(f"\n{'='*50}")
     print(f"Evaluation Results:")
     print(f"  Policy: {policy_path}")
@@ -313,6 +343,12 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     print(f"  Episodes: {episode} (skipped {skipped_episodes} trivial cases)")
     print(f"  Task Success Rate: {success_rate:.2%} ({success_count}/{episode})")
     print(f"  Average Reward: {avg_reward:.4f}")
+    if failure_count > 0:
+        print(f"\n  Failed Trials Distance Statistics ({failure_count} failures):")
+        print(f"    Average Distance from Target: {avg_failure_distance:.4f} m")
+        print(f"    Median Distance from Target: {median_failure_distance:.4f} m")
+        print(f"    Min Distance: {min_failure_distance:.4f} m")
+        print(f"    Max Distance: {max_failure_distance:.4f} m")
     print(f"{'='*50}")
     
     # Save trajectories with metadata for later visualization
@@ -327,7 +363,8 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         print(f"\nCreating preview images from first {min(5, len(trajectories_for_viz))} episodes...")
         os.makedirs('eval_previews_push', exist_ok=True)
         
-        for ep_idx, (trajectory, _, _) in enumerate(trajectories_for_viz[:5]):
+        for ep_idx, traj_data in enumerate(trajectories_for_viz[:5]):
+            trajectory = traj_data[0]  # Extract trajectory (first element)
             create_eval_preview(trajectory, 
                               f'eval_previews_push/episode_{ep_idx+1:03d}.png',
                               grid_size=(4, 4))
