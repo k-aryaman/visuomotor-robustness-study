@@ -137,6 +137,7 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     # Evaluation loop
     success_count = 0
     total_reward = 0.0
+    failure_distances = []  # Track distances for failed trials
     
     print(f"\nEvaluating policy for {n_episodes} episodes...")
     
@@ -181,8 +182,34 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
             steps += 1
         
         # Check success
-        if info.get('is_success', False) or episode_reward > 0:
+        is_success = info.get('is_success', False) or episode_reward > 0
+        
+        # Get final object and target positions for distance calculation
+        if isinstance(observation, dict):
+            final_object_pos = np.array(observation.get('achieved_goal', observation.get('observation', [0, 0, 0])[:3]))
+            final_target_pos = np.array(observation.get('desired_goal', [0, 0, 0]))
+        else:
+            obs_array = np.array(observation)
+            # Try to extract object and target positions from observation array
+            # This depends on the observation structure - adjust indices as needed
+            if len(obs_array) >= 13:
+                final_object_pos = obs_array[7:10]  # Object position
+                final_target_pos = obs_array[10:13]  # Target position
+            elif len(obs_array) >= 10:
+                final_object_pos = obs_array[7:10]
+                final_target_pos = np.zeros(3)  # Target not in observation
+            else:
+                final_object_pos = np.zeros(3)
+                final_target_pos = np.zeros(3)
+        
+        # Calculate final distance from target
+        final_distance = np.linalg.norm(final_object_pos - final_target_pos)
+        
+        if is_success:
             success_count += 1
+        else:
+            # Track distances for failed trials
+            failure_distances.append(final_distance)
         
         total_reward += episode_reward
         
@@ -196,6 +223,19 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     success_rate = success_count / n_episodes
     avg_reward = total_reward / n_episodes
     
+    # Calculate failure distance statistics
+    failure_count = n_episodes - success_count
+    if failure_count > 0 and len(failure_distances) > 0:
+        avg_failure_distance = np.mean(failure_distances)
+        min_failure_distance = np.min(failure_distances)
+        max_failure_distance = np.max(failure_distances)
+        median_failure_distance = np.median(failure_distances)
+    else:
+        avg_failure_distance = 0.0
+        min_failure_distance = 0.0
+        max_failure_distance = 0.0
+        median_failure_distance = 0.0
+    
     print(f"\n{'='*50}")
     print(f"Evaluation Results:")
     print(f"  Policy: {policy_path}")
@@ -203,6 +243,12 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     print(f"  Episodes: {n_episodes}")
     print(f"  Task Success Rate: {success_rate:.2%} ({success_count}/{n_episodes})")
     print(f"  Average Reward: {avg_reward:.4f}")
+    if failure_count > 0:
+        print(f"\n  Failed Trials Distance Statistics ({failure_count} failures):")
+        print(f"    Average Distance from Target: {avg_failure_distance:.4f} m")
+        print(f"    Median Distance from Target: {median_failure_distance:.4f} m")
+        print(f"    Min Distance: {min_failure_distance:.4f} m")
+        print(f"    Max Distance: {max_failure_distance:.4f} m")
     print(f"{'='*50}")
     
     return success_rate, avg_reward
