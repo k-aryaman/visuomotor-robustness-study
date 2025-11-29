@@ -21,7 +21,7 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
                  demonstrations_file='demonstrations_reach.pkl', device='cuda', backbone_type='resnet',
                  resume_from_checkpoint=None, weight_decay=1e-4, lr_decay=0.95, output_dir=None,
                  use_gru=False, gru_hidden_dim=128, use_act=False, act_chunk_size=10, act_seq_len=1,
-                 use_spherical=False, freeze_backbone=False, gru_seq_len=1):
+                 use_spherical=False, freeze_backbone=False, gru_seq_len=1, use_distance_loss=False, distance_loss_weight=0.1):
     """
     Train a behavior cloning policy.
     
@@ -155,13 +155,9 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
         
         dataset = ACTSequenceDataset(demonstrations_file, transform, seq_len=act_seq_len, chunk_size=act_chunk_size)
         # Use num_workers=0 for ACT to avoid pickling issues with local class
-        total_size = len(dataset)
-        val_size = int(0.2 * total_size)
-        train_size = total_size - val_size
-        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
-        dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-        print(f"Split dataset (ACT): {train_size} train, {val_size} validation samples")
+        # Use full dataset for training (no validation split)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+        print(f"Dataset (ACT): {len(dataset)} samples")
     elif use_gru and gru_seq_len > 1:
         # Standard BC with GRU: use short sequences so GRU can leverage temporal context.
         from torch.utils.data import Dataset
@@ -248,22 +244,14 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
         
         dataset = GRUSequenceDataset(demonstrations_file, transform, seq_len=gru_seq_len)
         # Use num_workers=0 due to local class pickling constraints
-        total_size = len(dataset)
-        val_size = int(0.2 * total_size)
-        train_size = total_size - val_size
-        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
-        dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-        print(f"Split dataset (GRU seq): {train_size} train, {val_size} validation samples")
+        # Use full dataset for training (no validation split)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+        print(f"Dataset (GRU seq): {len(dataset)} samples")
     else:
         # Standard flat BC dataset: single (image, [state], action) per sample
-        total_size = len(dataset)
-        val_size = int(0.2 * total_size)
-        train_size = total_size - val_size
-        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
-        dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
-        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
-        print(f"Split dataset (flat BC): {train_size} train, {val_size} validation samples")
+        # Use full dataset for training (no validation split)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+        print(f"Dataset (flat BC): {len(dataset)} samples")
     
     # Check if dataset uses proprioception
     use_proprioception = dataset.use_proprioception
@@ -338,7 +326,7 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
         criterion = nn.SmoothL1Loss()  # Standard Huber loss
     optimizer = optim.Adam(policy.parameters(), lr=lr, weight_decay=weight_decay)
     
-    # Learning rate scheduler (ReduceLROnPlateau - reduces LR when loss plateaus)
+    # Learning rate scheduler (ReduceLROnPlateau - reduces LR when training loss plateaus)
     # This is better than fixed exponential decay as it adapts to actual training progress
     # threshold: minimum relative change to qualify as an improvement (0.01 = 1% improvement)
     # With threshold=0.01 and threshold_mode='rel', improvements < 1% don't count
@@ -367,9 +355,6 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
     print(f"Total batches per epoch: {total_batches}")
     print("Starting training...\n")
     
-    # Track best validation loss for model saving
-    best_val_loss = float('inf')
-    best_epoch = 0
     
     for epoch in range(start_epoch, n_epochs):
         total_loss = 0.0
@@ -446,6 +431,40 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
                         loss = per_sample_loss_normalized.mean()
                     else:
                         loss = criterion(predicted_for_loss, actions_for_loss)
+            elif use_gru and gru_seq_len > 1:
+                # GRU sequence training: batch is (images_seq, states_seq, action_target)
+                # images_seq: (batch, seq_len, 3, H, W)
+                # states_seq: (batch, seq_len, state_dim) or None
+                # action_target: (batch, action_dim) - target action at last timestep
+                images_seq, states_seq, action_target = batch
+                images_seq = images_seq.to(device)
+                if states_seq is not None:
+                    states_seq = states_seq.to(device)
+                action_target = action_target.to(device)
+                
+                optimizer.zero_grad()
+                # Forward pass: GRU processes sequence and outputs (batch, seq_len, action_dim)
+                predicted_actions_seq, _ = policy(images_seq, states_seq, hidden=None)
+                
+                # For sequence training, we supervise on the last predicted action
+                # predicted_actions_seq: (batch, seq_len, action_dim)
+                # action_target: (batch, action_dim)
+                # Ensure we extract the last timestep correctly
+                if len(predicted_actions_seq.shape) == 3:
+                    predicted_actions_spherical = predicted_actions_seq[:, -1, :]  # Last timestep: (batch, action_dim)
+                else:
+                    predicted_actions_spherical = predicted_actions_seq  # Already (batch, action_dim)
+                actions_for_loss = action_target
+                predicted_for_loss = predicted_actions_spherical
+                
+                # Compute loss for GRU sequence training
+                if use_weighted_loss:
+                    per_sample_loss = criterion(predicted_for_loss, actions_for_loss)
+                    expert_action_mags = torch.norm(actions_for_loss, dim=1, keepdim=True)
+                    action_weights = 1.0 + 2.0 * expert_action_mags
+                    loss = (per_sample_loss * action_weights.unsqueeze(1)).mean()
+                else:
+                    loss = criterion(predicted_for_loss, actions_for_loss)
             else:
                 # Standard BC: single action prediction
                 if use_proprioception:
@@ -466,25 +485,26 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
                 else:
                     predicted_actions_spherical = policy(images, states)
                 
-                # Convert expert actions from Cartesian to spherical
-                if use_spherical_coords:
-                    actions_spherical = cartesian_to_spherical(actions)
-                    
-                    # Scale predicted actions: tanh outputs [-1, 1], need to map appropriately
-                    # Magnitude: [0, 1] -> scale to [0, max_magnitude]
-                    # Theta: [-1, 1] -> [0, π]
-                    # Phi: [-1, 1] -> [-π, π]
-                    predicted_magnitude = torch.sigmoid(predicted_actions_spherical[..., 0])  # [0, 1]
-                    predicted_theta = (predicted_actions_spherical[..., 1] + 1.0) * 0.5 * np.pi  # [0, π]
-                    predicted_phi = predicted_actions_spherical[..., 2] * np.pi  # [-π, π]
-                    predicted_actions_spherical = torch.stack([predicted_magnitude, predicted_theta, predicted_phi], dim=-1)
-                    
-                    # Use spherical coordinates for loss
-                    actions_for_loss = actions_spherical
-                    predicted_for_loss = predicted_actions_spherical
-                else:
-                    actions_for_loss = actions
-                    predicted_for_loss = predicted_actions_spherical
+                # Convert expert actions from Cartesian to spherical (if not already done in GRU branch)
+                if not (use_gru and gru_seq_len > 1):
+                    if use_spherical_coords:
+                        actions_spherical = cartesian_to_spherical(actions)
+                        
+                        # Scale predicted actions: tanh outputs [-1, 1], need to map appropriately
+                        # Magnitude: [0, 1] -> scale to [0, max_magnitude]
+                        # Theta: [-1, 1] -> [0, π]
+                        # Phi: [-1, 1] -> [-π, π]
+                        predicted_magnitude = torch.sigmoid(predicted_actions_spherical[..., 0])  # [0, 1]
+                        predicted_theta = (predicted_actions_spherical[..., 1] + 1.0) * 0.5 * np.pi  # [0, π]
+                        predicted_phi = predicted_actions_spherical[..., 2] * np.pi  # [-π, π]
+                        predicted_actions_spherical = torch.stack([predicted_magnitude, predicted_theta, predicted_phi], dim=-1)
+                        
+                        # Use spherical coordinates for loss
+                        actions_for_loss = actions_spherical
+                        predicted_for_loss = predicted_actions_spherical
+                    else:
+                        actions_for_loss = actions
+                        predicted_for_loss = predicted_actions_spherical
                 
                 # Compute loss
                 if use_weighted_loss:
@@ -520,6 +540,16 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
                     else:
                         # Standard loss
                         loss = criterion(predicted_for_loss, actions_for_loss)
+                
+                # Add distance loss if enabled
+                # Note: This requires data collection to include object_pos and target_pos
+                # (but NOT feed them to the model - only use for loss calculation)
+                # Distance loss encourages actions that move object toward target
+                if use_distance_loss:
+                    # TODO: Implement when data includes object_pos and target_pos
+                    # loss_distance = ||object_pos + predicted_action - target_pos||
+                    # total_loss = action_loss + distance_loss_weight * distance_loss
+                    pass
             
             # Backward pass
             loss.backward()
@@ -535,119 +565,12 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
         
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
         
-        # Validation phase
-        policy.eval()
-        val_loss = 0.0
-        val_batches = 0
-        with torch.no_grad():
-            for val_batch in val_dataloader:
-                if use_act:
-                    images_seq, states_seq, actions_chunk = val_batch
-                    images_seq = images_seq.to(device)
-                    if states_seq is not None:
-                        states_seq = states_seq.to(device)
-                    actions_chunk = actions_chunk.to(device)
-                    
-                    predicted_actions_spherical = policy(images_seq, states_seq)
-                    
-                    # Convert expert actions from Cartesian to spherical
-                    if use_spherical_coords:
-                        batch_size, chunk_size, _ = actions_chunk.shape
-                        actions_flat = actions_chunk.view(-1, 3)
-                        actions_spherical_flat = cartesian_to_spherical(actions_flat)
-                        actions_spherical = actions_spherical_flat.view(batch_size, chunk_size, 3)
-                        
-                        # Scale predicted actions
-                        predicted_magnitude = torch.sigmoid(predicted_actions_spherical[..., 0])
-                        predicted_theta = (predicted_actions_spherical[..., 1] + 1.0) * 0.5 * np.pi
-                        predicted_phi = predicted_actions_spherical[..., 2] * np.pi
-                        predicted_actions_spherical = torch.stack([predicted_magnitude, predicted_theta, predicted_phi], dim=-1)
-                        
-                        actions_for_loss = actions_spherical
-                        predicted_for_loss = predicted_actions_spherical
-                    else:
-                        actions_for_loss = actions_chunk
-                        predicted_for_loss = predicted_actions_spherical
-                    
-                    if use_weighted_loss:
-                        per_sample_loss = criterion(predicted_for_loss, actions_for_loss)
-                        if use_spherical_coords:
-                            # Normalize loss by dimension ranges
-                            dim_ranges = torch.tensor([1.0, np.pi, 2.0 * np.pi], device=per_sample_loss.device)
-                            per_sample_loss_normalized = per_sample_loss / dim_ranges.unsqueeze(0).unsqueeze(0)
-                            
-                            expert_action_mags = actions_for_loss[..., 0:1]
-                            action_weights = 1.0 + 2.0 * expert_action_mags
-                            batch_loss = (per_sample_loss_normalized * action_weights).mean()
-                        else:
-                            expert_action_mags = torch.norm(actions_for_loss, dim=2, keepdim=True)
-                            action_weights = 1.0 + 2.0 * expert_action_mags
-                            batch_loss = (per_sample_loss * action_weights).mean()
-                    else:
-                        if use_spherical_coords:
-                            # Normalize loss by dimension ranges
-                            dim_ranges = torch.tensor([1.0, np.pi, 2.0 * np.pi], device=predicted_for_loss.device)
-                            per_sample_loss = criterion(predicted_for_loss, actions_for_loss)
-                            per_sample_loss_normalized = per_sample_loss / dim_ranges.unsqueeze(0).unsqueeze(0)
-                            batch_loss = per_sample_loss_normalized.mean()
-                        else:
-                            batch_loss = criterion(predicted_for_loss, actions_for_loss)
-                else:
-                    if use_proprioception:
-                        images, states, actions = val_batch
-                        images = images.to(device)
-                        states = states.to(device)
-                        actions = actions.to(device)
-                    else:
-                        images, actions = val_batch
-                        images = images.to(device)
-                        actions = actions.to(device)
-                        states = None
-                    
-                    if hasattr(policy, 'use_gru') and policy.use_gru:
-                        predicted_actions_spherical, _ = policy(images, states, hidden=None)
-                    else:
-                        predicted_actions_spherical = policy(images, states)
-                    
-                    # Convert expert actions from Cartesian to spherical
-                    if use_spherical_coords:
-                        actions_spherical = cartesian_to_spherical(actions)
-                        
-                        # Scale predicted actions
-                        predicted_magnitude = torch.sigmoid(predicted_actions_spherical[..., 0])
-                        predicted_theta = (predicted_actions_spherical[..., 1] + 1.0) * 0.5 * np.pi
-                        predicted_phi = predicted_actions_spherical[..., 2] * np.pi
-                        predicted_actions_spherical = torch.stack([predicted_magnitude, predicted_theta, predicted_phi], dim=-1)
-                        
-                        actions_for_loss = actions_spherical
-                        predicted_for_loss = predicted_actions_spherical
-                    else:
-                        actions_for_loss = actions
-                        predicted_for_loss = predicted_actions_spherical
-                    
-                    if use_weighted_loss:
-                        per_sample_loss = criterion(predicted_for_loss, actions_for_loss)
-                        if use_spherical_coords:
-                            expert_action_mags = actions_for_loss[..., 0:1]
-                        else:
-                            expert_action_mags = torch.norm(actions_for_loss, dim=1, keepdim=True)
-                        action_weights = 1.0 + 2.0 * expert_action_mags
-                        batch_loss = (per_sample_loss * action_weights.unsqueeze(1)).mean()
-                    else:
-                        batch_loss = criterion(predicted_for_loss, actions_for_loss)
-                
-                val_loss += batch_loss.item()
-                val_batches += 1
-        
-        avg_val_loss = val_loss / val_batches if val_batches > 0 else 0.0
-        policy.train()
-        
         current_lr = optimizer.param_groups[0]['lr']
-        print(f"Epoch {epoch + 1}/{n_epochs}, Train Loss: {avg_loss:.6f}, Val Loss: {avg_val_loss:.6f}, LR: {current_lr:.6f}", flush=True)
+        print(f"Epoch {epoch + 1}/{n_epochs}, Train Loss: {avg_loss:.6f}, LR: {current_lr:.6f}", flush=True)
         
-        # Update learning rate (ReduceLROnPlateau uses validation loss)
+        # Update learning rate (ReduceLROnPlateau uses training loss)
         old_lr = current_lr
-        scheduler.step(avg_val_loss)  # Use validation loss for scheduling
+        scheduler.step(avg_loss)  # Use training loss for scheduling
         new_lr = optimizer.param_groups[0]['lr']
         if new_lr < old_lr:
             print(f"  -> Learning rate reduced from {old_lr:.6f} to {new_lr:.6f}", flush=True)
@@ -665,7 +588,6 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
             'state_dim': state_dim,
             'epoch': epoch + 1,
             'train_loss': avg_loss,
-            'val_loss': avg_val_loss,
             'use_act': use_act,
             'use_spherical': use_spherical_coords,
             'use_gru': use_gru,
@@ -678,7 +600,6 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
                 'state_dim': state_dim,
                 'epoch': epoch + 1,
                 'train_loss': avg_loss,
-                'val_loss': avg_val_loss,
                 'use_act': use_act,
                 'use_spherical': use_spherical_coords,
                 'use_gru': use_gru,
@@ -692,14 +613,6 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
             checkpoint['metadata']['act_seq_len'] = act_seq_len
         torch.save(checkpoint, checkpoint_path)
         print(f"Saved checkpoint: {checkpoint_path}", flush=True)
-        
-        # Save best model based on validation loss
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            best_epoch = epoch + 1
-            best_model_path = os.path.join(output_dir, 'models', f'{checkpoint_name}_best.pth')
-            torch.save(checkpoint, best_model_path)
-            print(f"  -> New best model! Val loss: {avg_val_loss:.6f} (saved to {best_model_path})", flush=True)
     
     # Save final model with metadata
     model_path = os.path.join(output_dir, 'models', model_name)
@@ -714,8 +627,6 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
         'use_spherical': use_spherical_coords,
         'use_gru': use_gru,
         'gru_hidden_dim': gru_hidden_dim,
-        'best_val_loss': best_val_loss,
-        'best_epoch': best_epoch,
         'metadata': {
             'backbone_type': backbone_type,
             'regime': regime,
@@ -726,8 +637,6 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
             'use_spherical': use_spherical_coords,
             'use_gru': use_gru,
             'gru_hidden_dim': gru_hidden_dim,
-            'best_val_loss': best_val_loss,
-            'best_epoch': best_epoch,
         }
     }
     if use_act:
@@ -737,7 +646,6 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
         checkpoint['metadata']['act_seq_len'] = act_seq_len
     torch.save(checkpoint, model_path)
     print(f"\nSaved final model to {model_path}")
-    print(f"Best model was at epoch {best_epoch} with validation loss: {best_val_loss:.6f}")
     
     return policy
 
@@ -784,6 +692,10 @@ if __name__ == '__main__':
                        help='Number of observation timesteps to use as input for ACT (default: 1)')
     parser.add_argument('--use_spherical', action='store_true',
                        help='Use spherical coordinates (magnitude, theta, phi) instead of Cartesian (dx, dy, dz)')
+    parser.add_argument('--use_distance_loss', action='store_true',
+                       help='Enable distance-to-target loss (requires object_pos and target_pos in data, not fed to model)')
+    parser.add_argument('--distance_loss_weight', type=float, default=0.1,
+                       help='Weight for distance loss term (default: 0.1)')
     
     args = parser.parse_args()
     
@@ -806,6 +718,8 @@ if __name__ == '__main__':
         act_seq_len=args.act_seq_len,
         use_spherical=args.use_spherical,
         freeze_backbone=args.freeze_backbone,
-        gru_seq_len=args.gru_seq_len
+        gru_seq_len=args.gru_seq_len,
+        use_distance_loss=args.use_distance_loss,
+        distance_loss_weight=args.distance_loss_weight
     )
 

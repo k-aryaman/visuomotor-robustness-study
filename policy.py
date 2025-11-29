@@ -232,33 +232,49 @@ class VisuomotorBCPolicy(nn.Module):
         
         # Apply GRU if enabled (for temporal modeling)
         if self.use_gru:
-            # Handle both single timestep and sequence inputs
+            # Ensure features are in sequence format: (batch, seq_len, feature_dim)
             if len(features.shape) == 2:
                 # Single timestep: (batch_size, feature_dim) -> (batch_size, 1, feature_dim)
                 features = features.unsqueeze(1)
             
-            # Initialize hidden state if not provided
+            # Initialize hidden state if not provided (for proper GRU sequence processing)
+            # GRU expects hidden: (num_layers, batch, hidden_dim) - we use 1 layer
             if hidden is None:
                 batch_size = features.shape[0]
                 hidden = torch.zeros(1, batch_size, self.gru_hidden_dim, 
                                     device=features.device, dtype=features.dtype)
             
             # GRU forward: (batch, seq_len, input_dim) -> (batch, seq_len, hidden_dim)
+            # This processes the entire sequence, allowing GRU to learn temporal dependencies
             gru_out, hidden = self.gru(features, hidden)
             
-            # Use last timestep output (or squeeze if single timestep)
+            # For sequence inputs, use all timesteps for action prediction
+            # This allows the model to leverage temporal context
             if gru_out.shape[1] == 1:
+                # Single timestep: squeeze
                 features = gru_out.squeeze(1)  # (batch, hidden_dim)
             else:
-                features = gru_out[:, -1, :]  # (batch, hidden_dim) - last timestep
+                # Sequence: use all timesteps - GRU has already processed temporal dependencies
+                # We'll predict actions for all timesteps, but typically supervise on last
+                features = gru_out  # (batch, seq_len, hidden_dim)
         else:
             # No GRU - use features directly
             if len(features.shape) == 3:
                 # If somehow got 3D without GRU, take last timestep
                 features = features[:, -1, :]
         
-        # Predict action
-        action = self.head(features)
+        # Predict action(s)
+        # If features is sequence: (batch, seq_len, hidden_dim) -> (batch, seq_len, action_dim)
+        # If features is single: (batch, hidden_dim) -> (batch, action_dim)
+        if len(features.shape) == 3:
+            # Sequence input: predict action for each timestep
+            batch_size, seq_len, hidden_dim = features.shape
+            features_flat = features.reshape(batch_size * seq_len, hidden_dim)
+            actions_flat = self.head(features_flat)
+            action = actions_flat.reshape(batch_size, seq_len, self.action_dim)
+        else:
+            # Single timestep
+            action = self.head(features)
         
         if self.use_gru:
             return action, hidden
