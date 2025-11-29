@@ -7,6 +7,7 @@ import torch
 import numpy as np
 import argparse
 import os
+import random
 import pybullet as p
 
 from panda_gym.envs import PandaPickAndPlaceEnv
@@ -60,15 +61,20 @@ def add_visual_corruption(env, corruption_type='distractor'):
         
         # Use the physics client (or default if None)
         if corruption_type == 'distractor':
-            # Add a red sphere as a static distractor
-            # Position it off-center, not interfering with the task
-            distractor_pos = [0.3, 0.3, 0.1]  # Off to the side
+            # Add a green sphere as a static distractor
+            # Position it randomly on the board (no collision, visual only)
+            # Random position on board: x, y in reasonable range, z on board surface
+            distractor_pos = [
+                random.uniform(-0.3, 0.3),  # Random x position
+                random.uniform(-0.3, 0.3),  # Random y position
+                0.05  # On board surface (5cm height for sphere center, radius 0.05)
+            ]
             
             # Create a simple visual shape (sphere)
             visual_shape_id = p.createVisualShape(
                 shapeType=p.GEOM_SPHERE,
                 radius=0.05,  # 5cm radius
-                rgbaColor=[1.0, 0.0, 0.0, 1.0]  # Red
+                rgbaColor=[0.0, 1.0, 0.0, 1.0]  # Green
             )
             
             # Create a multi-body with no collision (visual only)
@@ -79,13 +85,13 @@ def add_visual_corruption(env, corruption_type='distractor'):
             )
             
         elif corruption_type == 'occlusion':
-            # Add a small box as occlusion
+            # Add a large transparent box as occlusion (blocks ~half the board visually)
             occlusion_pos = [0.0, 0.0, 0.15]  # In the middle, elevated
             
             visual_shape_id = p.createVisualShape(
                 shapeType=p.GEOM_BOX,
-                halfExtents=[0.03, 0.03, 0.05],  # Small box
-                rgbaColor=[0.5, 0.5, 0.5, 0.8]  # Semi-transparent gray
+                halfExtents=[0.3, 0.3, 0.1],  # Large box covering ~half the board area
+                rgbaColor=[0.5, 0.5, 0.5, 0.3]  # More transparent gray (lower alpha)
             )
             
             p.createMultiBody(
