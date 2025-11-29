@@ -10,7 +10,7 @@ import os
 import pybullet as p
 from PIL import Image
 
-from panda_gym.envs import PandaReachEnv
+from panda_gym.envs import PandaPushEnv
 from policy import load_policy
 from data import get_clean_transform
 from action_utils import spherical_to_cartesian
@@ -122,14 +122,14 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     
     # Load policy (backbone_type will be auto-detected if None)
     print(f"Loading policy from {policy_path}...")
-    policy = load_policy(policy_path, image_size=image_size, action_dim=3,  # Reach task: 3D actions 
+    policy = load_policy(policy_path, image_size=image_size, action_dim=3,  # Push task: 3D actions 
                          backbone_type=backbone_type, device=device)
     
     # Get transform (use clean transform for evaluation)
     transform = get_clean_transform()
     
     # Initialize environment
-    env = PandaReachEnv(render_mode='rgb_array', render_width=84, render_height=84)
+    env = PandaPushEnv(render_mode='rgb_array', render_width=84, render_height=84)
     
     # Add visual corruption if specified
     if corruption_type:
@@ -139,9 +139,10 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     # Evaluation loop
     success_count = 0
     total_reward = 0.0
+    failure_distances = []  # Track distances for failed trials
     
     # Store trajectories for visualization with success/failure labels
-    trajectories_for_viz = []  # List of (images, is_success, episode_idx)
+    trajectories_for_viz = []  # List of (images, is_success, episode_idx, final_distance)
     
     print(f"\nEvaluating policy for {n_episodes} episodes...")
     
@@ -196,7 +197,7 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
                     image_copy = image.copy()
                 episode_images.append(image_copy)
             
-            # Extract proprioceptive state from observation (only gripper position for reach task)
+            # Extract proprioceptive state from observation (only gripper position for push task)
             state_tensor = None
             if hasattr(policy, 'state_dim') and policy.state_dim > 0:
                 if isinstance(observation, dict):
@@ -206,7 +207,7 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
                     obs_array = np.array(observation)
                     gripper_pos = obs_array[:3] if len(obs_array) >= 3 else np.zeros(3)
                 
-                # Proprioceptive state: only gripper_pos (3D) - no gripper_width needed for reach task
+                # Proprioceptive state: only gripper_pos (3D) - no gripper_width needed for push task
                 proprio_state = gripper_pos
                 state_tensor = torch.FloatTensor(proprio_state).unsqueeze(0).to(device)
             
@@ -262,14 +263,14 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
             
             # Debug: print action stats for first few episodes (before step)
             if episode < 3:
-                action_magnitude = np.linalg.norm(action)  # Magnitude of action (3D for reach)
+                action_magnitude = np.linalg.norm(action)  # Magnitude of action (3D for push)
                 if use_spherical:
                     print(f"  Episode {episode + 1}, Step {steps}: spherical = {action_spherical_scaled}, "
                           f"cartesian = {action}, magnitude = {action_magnitude:.4f}")
                 else:
                     print(f"  Episode {episode + 1}, Step {steps}: cartesian = {action}, magnitude = {action_magnitude:.4f}")
             
-            # Step environment (actions are 3D Cartesian for reach task)
+            # Step environment (actions are 3D Cartesian for push task)
             next_observation, reward, terminated, truncated, info = env.step(action)
             
             # Debug: print reward after step
@@ -282,12 +283,28 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         
         # Check success
         is_success = info.get('is_success', False) or episode_reward > 0
+        
+        # Get final object and target positions for distance calculation
+        if isinstance(observation, dict):
+            final_object_pos = np.array(observation['achieved_goal'])
+            final_target_pos = np.array(observation['desired_goal'])
+        else:
+            obs_array = np.array(observation)
+            final_object_pos = obs_array[7:10] if len(obs_array) >= 10 else np.zeros(3)
+            final_target_pos = obs_array[10:13] if len(obs_array) >= 13 else np.zeros(3)
+        
+        # Calculate final distance from target
+        final_distance = np.linalg.norm(final_object_pos - final_target_pos)
+        
         if is_success:
             success_count += 1
+        else:
+            # Track distances for failed trials
+            failure_distances.append(final_distance)
         
-        # Store trajectory for visualization with success label
+        # Store trajectory for visualization with success label and final distance
         if len(episode_images) > 0:
-            trajectories_for_viz.append((episode_images, is_success, episode))
+            trajectories_for_viz.append((episode_images, is_success, episode, final_distance))
         
         total_reward += episode_reward
         episode += 1  # Increment episode counter after valid episode
@@ -306,6 +323,19 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         success_rate = 0.0
         avg_reward = 0.0
     
+    # Calculate failure distance statistics
+    failure_count = episode - success_count
+    if failure_count > 0 and len(failure_distances) > 0:
+        avg_failure_distance = np.mean(failure_distances)
+        min_failure_distance = np.min(failure_distances)
+        max_failure_distance = np.max(failure_distances)
+        median_failure_distance = np.median(failure_distances)
+    else:
+        avg_failure_distance = 0.0
+        min_failure_distance = 0.0
+        max_failure_distance = 0.0
+        median_failure_distance = 0.0
+    
     print(f"\n{'='*50}")
     print(f"Evaluation Results:")
     print(f"  Policy: {policy_path}")
@@ -313,108 +343,22 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     print(f"  Episodes: {episode} (skipped {skipped_episodes} trivial cases)")
     print(f"  Task Success Rate: {success_rate:.2%} ({success_count}/{episode})")
     print(f"  Average Reward: {avg_reward:.4f}")
+    if failure_count > 0:
+        print(f"\n  Failed Trials Distance Statistics ({failure_count} failures):")
+        print(f"    Average Distance from Target: {avg_failure_distance:.4f} m")
+        print(f"    Median Distance from Target: {median_failure_distance:.4f} m")
+        print(f"    Min Distance: {min_failure_distance:.4f} m")
+        print(f"    Max Distance: {max_failure_distance:.4f} m")
     print(f"{'='*50}")
     
     # Save trajectories with metadata for later visualization
-    eval_trajectories_file = 'eval_trajectories_reach.pkl'
+    eval_trajectories_file = 'eval_trajectories_push.pkl'
     import pickle
     with open(eval_trajectories_file, 'wb') as f:
         pickle.dump(trajectories_for_viz, f)
     print(f"\nSaved {len(trajectories_for_viz)} evaluation trajectories to {eval_trajectories_file}")
     
-    # Create preview images from evaluation episodes
-    if len(trajectories_for_viz) > 0:
-        print(f"\nCreating preview images from first {min(5, len(trajectories_for_viz))} episodes...")
-        os.makedirs('eval_previews_reach', exist_ok=True)
-        
-        for ep_idx, (trajectory, _, _) in enumerate(trajectories_for_viz[:5]):
-            create_eval_preview(trajectory, 
-                              f'eval_previews_reach/episode_{ep_idx+1:03d}.png',
-                              grid_size=(4, 4))
-        print(f"Saved preview images to eval_previews_reach/ directory")
-    
     return success_rate, avg_reward, trajectories_for_viz
-
-
-def create_eval_preview(images, output_file, grid_size=(4, 4)):
-    """
-    Create a preview grid image from evaluation episode images.
-    Similar to create_preview.py but works with a list of images directly.
-    
-    Args:
-        images: List of numpy arrays (images from the episode)
-        output_file: Path to save the preview image
-        grid_size: Tuple of (rows, cols) for the grid (default: (4, 4))
-    """
-    if len(images) == 0:
-        return
-    
-    grid_rows, grid_cols = grid_size
-    total_grid_frames = grid_rows * grid_cols
-    
-    # Select evenly spaced frames from the trajectory
-    num_frames = len(images)
-    if num_frames <= total_grid_frames:
-        # Use all frames if trajectory is shorter than grid
-        selected_indices = list(range(num_frames))
-        # Pad with last frame if needed
-        while len(selected_indices) < total_grid_frames:
-            selected_indices.append(num_frames - 1)
-    else:
-        # Select evenly spaced frames
-        step = num_frames / total_grid_frames
-        selected_indices = [int(i * step) for i in range(total_grid_frames)]
-    
-    # Extract and process images
-    processed_images = []
-    for idx in selected_indices[:total_grid_frames]:
-        image = images[idx]
-        
-        # Convert to numpy array if not already
-        if not isinstance(image, np.ndarray):
-            image = np.array(image)
-        
-        # Handle dtype - ensure uint8
-        if image.dtype != np.uint8:
-            if image.dtype == np.float32 or image.dtype == np.float64:
-                if image.max() <= 1.0:
-                    image = (image * 255).astype(np.uint8)
-                else:
-                    image = image.astype(np.uint8)
-            else:
-                image = image.astype(np.uint8)
-        
-        # Handle image shape
-        if len(image.shape) == 2:
-            # Grayscale, convert to RGB
-            image = np.stack([image] * 3, axis=-1)
-        elif len(image.shape) == 3:
-            if image.shape[2] == 4:
-                # RGBA, convert to RGB
-                image = image[:, :, :3]
-            elif image.shape[2] != 3:
-                raise ValueError(f"Unexpected image shape: {image.shape}, expected (H, W, 3) or (H, W, 4)")
-        else:
-            raise ValueError(f"Unexpected image shape: {image.shape}, expected 2D or 3D array")
-        
-        processed_images.append(image)
-    
-    # Create grid
-    img_height, img_width = processed_images[0].shape[:2]
-    grid_image = np.zeros((grid_rows * img_height, grid_cols * img_width, 3), dtype=np.uint8)
-    
-    for i, img in enumerate(processed_images):
-        row = i // grid_cols
-        col = i % grid_cols
-        y_start = row * img_height
-        y_end = y_start + img_height
-        x_start = col * img_width
-        x_end = x_start + img_width
-        grid_image[y_start:y_end, x_start:x_end] = img
-    
-    # Save image
-    pil_image = Image.fromarray(grid_image)
-    pil_image.save(output_file)
 
 
 if __name__ == '__main__':
@@ -446,4 +390,3 @@ if __name__ == '__main__':
         backbone_type=args.backbone,
         max_steps=args.max_steps,
     )
-
