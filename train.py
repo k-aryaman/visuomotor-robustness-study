@@ -18,7 +18,7 @@ from action_utils import cartesian_to_spherical, spherical_to_cartesian
 
 
 def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3, 
-                 demonstrations_file='demonstrations_push.pkl', device='cuda', backbone_type='resnet',
+                 demonstrations_file='demonstrations_reach.pkl', device='cuda', backbone_type='resnet',
                  resume_from_checkpoint=None, weight_decay=1e-4, lr_decay=0.95, output_dir=None,
                  use_gru=False, gru_hidden_dim=128, use_act=False, act_chunk_size=10, act_seq_len=1,
                  use_spherical=False, freeze_backbone=False, gru_seq_len=1):
@@ -41,7 +41,7 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
     if output_dir is None:
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = f"training_runs_push/{regime}_{backbone_type}_{timestamp}"
+        output_dir = f"training_runs_reach/{regime}_{backbone_type}_{timestamp}"
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.join(output_dir, 'models'), exist_ok=True)
     print(f"Output directory: {output_dir}")
@@ -753,7 +753,7 @@ if __name__ == '__main__':
                        help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-3,
                        help='Learning rate')
-    parser.add_argument('--data', type=str, default='demonstrations_push.pkl',
+    parser.add_argument('--data', type=str, default='demonstrations_reach.pkl',
                        help='Path to demonstrations file')
     parser.add_argument('--device', type=str, default='cuda',
                        help='Device to use (cuda or cpu)')

@@ -10,7 +10,7 @@ import os
 import pybullet as p
 from PIL import Image
 
-from panda_gym.envs import PandaPushEnv
+from panda_gym.envs import PandaReachEnv
 from policy import load_policy
 from data import get_clean_transform
 from action_utils import spherical_to_cartesian
@@ -122,14 +122,14 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     
     # Load policy (backbone_type will be auto-detected if None)
     print(f"Loading policy from {policy_path}...")
-    policy = load_policy(policy_path, image_size=image_size, action_dim=3,  # Push task: 3D actions 
+    policy = load_policy(policy_path, image_size=image_size, action_dim=3,  # Reach task: 3D actions 
                          backbone_type=backbone_type, device=device)
     
     # Get transform (use clean transform for evaluation)
     transform = get_clean_transform()
     
     # Initialize environment
-    env = PandaPushEnv(render_mode='rgb_array', render_width=84, render_height=84)
+    env = PandaReachEnv(render_mode='rgb_array', render_width=84, render_height=84)
     
     # Add visual corruption if specified
     if corruption_type:
@@ -196,7 +196,7 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
                     image_copy = image.copy()
                 episode_images.append(image_copy)
             
-            # Extract proprioceptive state from observation (only gripper position for push task)
+            # Extract proprioceptive state from observation (only gripper position for reach task)
             state_tensor = None
             if hasattr(policy, 'state_dim') and policy.state_dim > 0:
                 if isinstance(observation, dict):
@@ -206,7 +206,7 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
                     obs_array = np.array(observation)
                     gripper_pos = obs_array[:3] if len(obs_array) >= 3 else np.zeros(3)
                 
-                # Proprioceptive state: only gripper_pos (3D) - no gripper_width needed for push task
+                # Proprioceptive state: only gripper_pos (3D) - no gripper_width needed for reach task
                 proprio_state = gripper_pos
                 state_tensor = torch.FloatTensor(proprio_state).unsqueeze(0).to(device)
             
@@ -262,14 +262,14 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
             
             # Debug: print action stats for first few episodes (before step)
             if episode < 3:
-                action_magnitude = np.linalg.norm(action)  # Magnitude of action (3D for push)
+                action_magnitude = np.linalg.norm(action)  # Magnitude of action (3D for reach)
                 if use_spherical:
                     print(f"  Episode {episode + 1}, Step {steps}: spherical = {action_spherical_scaled}, "
                           f"cartesian = {action}, magnitude = {action_magnitude:.4f}")
                 else:
                     print(f"  Episode {episode + 1}, Step {steps}: cartesian = {action}, magnitude = {action_magnitude:.4f}")
             
-            # Step environment (actions are 3D Cartesian for push task)
+            # Step environment (actions are 3D Cartesian for reach task)
             next_observation, reward, terminated, truncated, info = env.step(action)
             
             # Debug: print reward after step
@@ -316,7 +316,7 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     print(f"{'='*50}")
     
     # Save trajectories with metadata for later visualization
-    eval_trajectories_file = 'eval_trajectories_push.pkl'
+    eval_trajectories_file = 'eval_trajectories_reach.pkl'
     import pickle
     with open(eval_trajectories_file, 'wb') as f:
         pickle.dump(trajectories_for_viz, f)
@@ -325,13 +325,13 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     # Create preview images from evaluation episodes
     if len(trajectories_for_viz) > 0:
         print(f"\nCreating preview images from first {min(5, len(trajectories_for_viz))} episodes...")
-        os.makedirs('eval_previews_push', exist_ok=True)
+        os.makedirs('eval_previews_reach', exist_ok=True)
         
         for ep_idx, (trajectory, _, _) in enumerate(trajectories_for_viz[:5]):
             create_eval_preview(trajectory, 
-                              f'eval_previews_push/episode_{ep_idx+1:03d}.png',
+                              f'eval_previews_reach/episode_{ep_idx+1:03d}.png',
                               grid_size=(4, 4))
-        print(f"Saved preview images to eval_previews_push/ directory")
+        print(f"Saved preview images to eval_previews_reach/ directory")
     
     return success_rate, avg_reward, trajectories_for_viz
 

@@ -28,7 +28,17 @@ class DemonstrationDataset(Dataset):
         
         # Load demonstrations
         with open(demonstrations_file, 'rb') as f:
-            self.trajectories = pickle.load(f)
+            loaded_data = pickle.load(f)
+        
+        # Handle reach task format: trajectories may be wrapped in metadata dicts
+        # Format: [{'trajectory': [...], 'start_pos': ..., 'target_pos': ...}, ...]
+        # Or push task format: [[(image, state, action), ...], ...]
+        if len(loaded_data) > 0 and isinstance(loaded_data[0], dict) and 'trajectory' in loaded_data[0]:
+            # Reach task format: extract trajectory from metadata dict
+            self.trajectories = [item['trajectory'] for item in loaded_data]
+        else:
+            # Push task format: trajectories are lists directly
+            self.trajectories = loaded_data
         
         # Flatten trajectories into individual (image, state, action) or (image, action) pairs
         self.data = []
