@@ -131,9 +131,19 @@ class VisuomotorBCPolicy(nn.Module):
             hidden: Updated GRU hidden state (if using GRU)
         """
         # Extract features from image
+        # Handle possible sequence dimension for GRU-based models:
+        # - image: (B, 3, H, W)          -> per-step input
+        # - image: (B, T, 3, H, W)       -> sequence input
+        seq_len = None
         if self.backbone_type == 'vit':
             # ViT forward pass: project to patches, add class token, encode, extract [CLS]
-            # Project image to patches: (B, C, H, W) -> (B, C, H', W')
+            # Expect image as (B, 3, H, W); if a sequence is provided, flatten time into batch.
+            if image.dim() == 5:
+                # (B, T, 3, H, W) -> (B*T, 3, H, W)
+                b, t, c, h, w = image.shape
+                seq_len = t
+                image = image.view(b * t, c, h, w)
+            # Project image to patches: (B', C, H, W) -> (B', C, H', W')
             x = self.vit_conv_proj(image)
             n, c, h, w = x.shape
             num_patches = h * w
@@ -181,20 +191,44 @@ class VisuomotorBCPolicy(nn.Module):
             # Pass through encoder (it will add positional embeddings internally)
             x = self.vit_encoder(x)
             
-            # Extract [CLS] token (first token) - shape: (batch_size, hidden_dim)
+            # Extract [CLS] token (first token) - shape: (B', hidden_dim)
             features = x[:, 0]
+            
+            # If this was a sequence, reshape back to (B, T, hidden_dim)
+            if seq_len is not None:
+                features = features.view(-1, seq_len, features.shape[-1])
         else:
+            # CNN / ResNet backbone
+            if image.dim() == 5:
+                # Sequence input: (B, T, 3, H, W) -> (B*T, 3, H, W)
+                b, t, c, h, w = image.shape
+                seq_len = t
+                image = image.view(b * t, c, h, w)
+            
             features = self.backbone(image)
-            # Flatten features
+            # Flatten features (B', feat_dim)
             if self.backbone_type == 'resnet':
                 # ResNet already has global average pooling
                 features = features.view(features.size(0), -1)
             else:  # CNN
                 features = features.view(features.size(0), -1)
+            
+            # If this was a sequence, reshape back to (B, T, feat_dim)
+            if seq_len is not None:
+                features = features.view(-1, seq_len, features.shape[-1])
         
         # Concatenate proprioceptive state if available
         if state is not None and self.state_dim > 0:
-            features = torch.cat([features, state], dim=-1)  # Use -1 for last dim to handle both 2D and 3D
+            # state can be (B, state_dim) or (B, T, state_dim)
+            if features.dim() == 2 and state.dim() == 2:
+                # (B, feat_dim) + (B, state_dim)
+                features = torch.cat([features, state], dim=-1)
+            elif features.dim() == 3:
+                # (B, T, feat_dim); ensure state matches
+                if state.dim() == 2:
+                    # Broadcast state over time dimension
+                    state = state.unsqueeze(1).expand(-1, features.shape[1], -1)
+                features = torch.cat([features, state], dim=-1)
         
         # Apply GRU if enabled (for temporal modeling)
         if self.use_gru:
@@ -309,22 +343,10 @@ def load_policy(model_path, image_size=(84, 84), action_dim=3, backbone_type=Non
         elif 'metadata' in checkpoint and 'gru_hidden_dim' in checkpoint['metadata']:
             gru_hidden_dim = checkpoint['metadata'].get('gru_hidden_dim', 128)
     else:
-        # Old format: just state_dict
+        # Old format: just state_dict (no metadata), so we cannot reliably infer GRU usage.
+        # In this case, we trust the defaults above (use_gru=False, gru_hidden_dim=128)
+        # unless the caller explicitly specifies a GRU-enabled model elsewhere.
         state_dict = checkpoint
-    
-    # Auto-detect GRU from state_dict if not in checkpoint metadata
-    # Check if GRU weights are present in state_dict
-    if not use_gru:
-        gru_keys = [k for k in state_dict.keys() if 'gru' in k.lower()]
-        if gru_keys:
-            use_gru = True
-            print(f"Detected GRU in checkpoint (keys: {len(gru_keys)} GRU parameters)")
-            # Infer gru_hidden_dim from head input size
-            if 'head.0.weight' in state_dict:
-                head_input_size = state_dict['head.0.weight'].shape[1]
-                if head_input_size != (512 + state_dim):  # If not backbone+state, must be GRU output
-                    gru_hidden_dim = head_input_size
-                    print(f"Inferred gru_hidden_dim={gru_hidden_dim} from head input size")
     
     model = VisuomotorBCPolicy(image_size=image_size, action_dim=action_dim, 
                                backbone_type=backbone_type, use_resnet=None, 

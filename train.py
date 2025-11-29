@@ -21,7 +21,7 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
                  demonstrations_file='demonstrations_push.pkl', device='cuda', backbone_type='resnet',
                  resume_from_checkpoint=None, weight_decay=1e-4, lr_decay=0.95, output_dir=None,
                  use_gru=False, gru_hidden_dim=128, use_act=False, act_chunk_size=10, act_seq_len=1,
-                 use_spherical=False):
+                 use_spherical=False, freeze_backbone=False, gru_seq_len=1):
     """
     Train a behavior cloning policy.
     
@@ -60,12 +60,14 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
     if use_act:
         print(f"Using ACT (Action Chunking with Transformers): chunk_size={act_chunk_size}, seq_len={act_seq_len}")
     
-    # Load dataset
+    # Load dataset (flat per-timestep samples by default)
     dataset = DemonstrationDataset(demonstrations_file, transform=transform)
     
-    # For ACT, we need sequences from trajectories, so we'll handle batching differently
+    # Optionally override with sequence datasets:
+    # - ACTSequenceDataset for ACT (sequence of observations + action chunks)
+    # - GRUSequenceDataset for standard BC with temporal context (sequence of observations, single target action)
     if use_act:
-        # ACT needs sequences from trajectories, so we'll create a custom collate function
+        # ACT needs sequences from trajectories, so we'll create a custom dataset
         from torch.utils.data import Dataset
         import pickle
         import numpy as np
@@ -112,7 +114,7 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
                 return len(self.samples)
             
             def __getitem__(self, idx):
-                traj_idx, start_idx, obs_seq, actions = self.samples[idx]
+                _, _, obs_seq, actions = self.samples[idx]
                 
                 # Process observation sequence
                 images = []
@@ -153,23 +155,115 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
         
         dataset = ACTSequenceDataset(demonstrations_file, transform, seq_len=act_seq_len, chunk_size=act_chunk_size)
         # Use num_workers=0 for ACT to avoid pickling issues with local class
-        # Split into train and validation (80/20)
         total_size = len(dataset)
         val_size = int(0.2 * total_size)
         train_size = total_size - val_size
         train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
         dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
         val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-        print(f"Split dataset: {train_size} train, {val_size} validation samples")
+        print(f"Split dataset (ACT): {train_size} train, {val_size} validation samples")
+    elif use_gru and gru_seq_len > 1:
+        # Standard BC with GRU: use short sequences so GRU can leverage temporal context.
+        from torch.utils.data import Dataset
+        import pickle
+        import numpy as np
+        from PIL import Image
+        
+        class GRUSequenceDataset(Dataset):
+            """
+            Dataset for GRU-based BC that returns:
+              - image sequence: (seq_len, 3, H, W)
+              - state sequence (optional): (seq_len, state_dim)
+              - target action: action at last timestep in the window
+            """
+            def __init__(self, demonstrations_file, transform, seq_len=5):
+                self.transform = transform
+                self.seq_len = seq_len
+                
+                # Load trajectories
+                with open(demonstrations_file, 'rb') as f:
+                    self.trajectories = pickle.load(f)
+                
+                # Check if using proprioception
+                self.use_proprioception = len(self.trajectories[0][0]) == 3 if len(self.trajectories) > 0 and len(self.trajectories[0]) > 0 else False
+                
+                # Create samples: sliding windows of length seq_len
+                self.samples = []
+                for traj_idx, trajectory in enumerate(self.trajectories):
+                    if len(trajectory) < seq_len:
+                        continue
+                    for start_idx in range(len(trajectory) - seq_len + 1):
+                        self.samples.append((traj_idx, start_idx))
+                
+                print(f"Created {len(self.samples)} GRU BC sequence samples from {len(self.trajectories)} trajectories (seq_len={seq_len})")
+            
+            def __len__(self):
+                return len(self.samples)
+            
+            def __getitem__(self, idx):
+                traj_idx, start_idx = self.samples[idx]
+                trajectory = self.trajectories[traj_idx]
+                window = trajectory[start_idx:start_idx + self.seq_len]
+                
+                images = []
+                states = []
+                
+                for step in window:
+                    if self.use_proprioception:
+                        image, state, _ = step
+                    else:
+                        image, _ = step
+                        state = None
+                    
+                    # Convert image
+                    if isinstance(image, np.ndarray):
+                        if image.dtype != np.uint8:
+                            image = (image * 255).astype(np.uint8)
+                        image = Image.fromarray(image)
+                    
+                    if self.transform:
+                        image = self.transform(image)
+                    
+                    images.append(image)
+                    if state is not None:
+                        states.append(torch.FloatTensor(state))
+                
+                # Last action in the window is the target
+                if self.use_proprioception:
+                    _, _, action = window[-1]
+                else:
+                    _, action = window[-1]
+                action = torch.FloatTensor(action)
+                
+                # Stack images: (seq_len, 3, H, W)
+                images = torch.stack(images)
+                
+                # Stack states if available: (seq_len, state_dim)
+                if self.use_proprioception:
+                    states = torch.stack(states)
+                else:
+                    states = None
+                
+                return images, states, action
+        
+        dataset = GRUSequenceDataset(demonstrations_file, transform, seq_len=gru_seq_len)
+        # Use num_workers=0 due to local class pickling constraints
+        total_size = len(dataset)
+        val_size = int(0.2 * total_size)
+        train_size = total_size - val_size
+        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+        dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+        print(f"Split dataset (GRU seq): {train_size} train, {val_size} validation samples")
     else:
-        # Split into train and validation (80/20)
+        # Standard flat BC dataset: single (image, [state], action) per sample
         total_size = len(dataset)
         val_size = int(0.2 * total_size)
         train_size = total_size - val_size
         train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
         dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
         val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
-        print(f"Split dataset: {train_size} train, {val_size} validation samples")
+        print(f"Split dataset (flat BC): {train_size} train, {val_size} validation samples")
     
     # Check if dataset uses proprioception
     use_proprioception = dataset.use_proprioception
@@ -199,6 +293,26 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
         policy = VisuomotorBCPolicy(image_size=(84, 84), action_dim=3, backbone_type=backbone_type,  # Push task uses 3D actions 
                                     state_dim=state_dim, use_gru=use_gru, gru_hidden_dim=gru_hidden_dim)
     policy.to(device)
+    
+    # Optionally freeze visual backbone (e.g., frozen ViT) so only head/GRU are trained
+    if freeze_backbone:
+        if backbone_type == 'vit':
+            print("Freezing ViT backbone parameters (conv_proj + encoder)...")
+            for param in policy.vit_conv_proj.parameters():
+                param.requires_grad = False
+            for param in policy.vit_encoder.parameters():
+                param.requires_grad = False
+            # Keep class token and pos_embed trainable for now (they're small), or freeze if desired:
+            # if hasattr(policy, 'vit_class_token'):
+            #     policy.vit_class_token.requires_grad = False
+        else:
+            print(f"Freezing {backbone_type} backbone parameters...")
+            for param in policy.backbone.parameters():
+                param.requires_grad = False
+        # Quick summary of trainable parameter count
+        trainable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in policy.parameters())
+        print(f"Trainable parameters after freezing backbone: {trainable_params}/{total_params}")
     
     # Loss and optimizer with weight decay (L2 regularization)
     # Use Huber loss (smooth L1) - less sensitive to outliers than MSE, helps with action magnitude
@@ -646,6 +760,8 @@ if __name__ == '__main__':
     parser.add_argument('--backbone', type=str, default='resnet',
                        choices=['resnet', 'vit', 'cnn'],
                        help='Backbone architecture (resnet, vit, or cnn)')
+    parser.add_argument('--freeze_backbone', action='store_true',
+                       help='Freeze visual backbone parameters (e.g., frozen ViT); only train head and GRU.')
     parser.add_argument('--resume', type=str, default=None,
                        help='Path to checkpoint to resume from (e.g., models/policy_clean_resnet_epoch_22.pth)')
     parser.add_argument('--weight_decay', type=float, default=1e-4,
@@ -658,6 +774,8 @@ if __name__ == '__main__':
                        help='Enable GRU for temporal modeling (lightweight RNN layer)')
     parser.add_argument('--gru_hidden_dim', type=int, default=128,
                        help='Hidden dimension for GRU (default: 128, lightweight)')
+    parser.add_argument('--gru_seq_len', type=int, default=1,
+                       help='Sequence length for GRU-based BC (1 = per-step, >1 = use sliding windows).')
     parser.add_argument('--use_act', action='store_true',
                        help='Use ACT (Action Chunking with Transformers) instead of standard BC')
     parser.add_argument('--act_chunk_size', type=int, default=10,
@@ -686,6 +804,8 @@ if __name__ == '__main__':
         use_act=args.use_act,
         act_chunk_size=args.act_chunk_size,
         act_seq_len=args.act_seq_len,
-        use_spherical=args.use_spherical
+        use_spherical=args.use_spherical,
+        freeze_backbone=args.freeze_backbone,
+        gru_seq_len=args.gru_seq_len
     )
 
