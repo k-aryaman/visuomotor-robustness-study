@@ -146,17 +146,20 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     success_count = 0
     total_reward = 0.0
     failure_distances = []  # Track distances for failed trials
+    episode_rewards = []  # Track rewards for statistics
     
     # Store trajectories for visualization: list of (images, is_success, episode_idx)
     # Format matches what visualize_eval_trajectories.py expects
     trajectories_for_viz = []
     
     print(f"\nEvaluating policy for {n_episodes} episodes...")
+    print("Progress will be shown after each episode completes.\n")
     
     # Add corruption once before episodes (if it persists across resets)
     if corruption_type:
         add_visual_corruption(env, corruption_type=corruption_type)
     
+    import sys
     for episode in range(n_episodes):
         observation, info = env.reset()
         
@@ -239,16 +242,25 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
             trajectories_for_viz.append((episode_images, is_success, episode))
         
         total_reward += episode_reward
+        episode_rewards.append(episode_reward)
         
+        # Print progress after each episode with flush
+        status = "[OK]" if (info.get('is_success', False) or episode_reward > 0) else "[FAIL]"
+        print(f"Episode {episode + 1}/{n_episodes}: {status} "
+              f"(steps: {steps}, reward: {episode_reward:.2f}, "
+              f"Success Rate: {success_count / (episode + 1):.2%})", flush=True)
+        
+        # Also print summary every 10 episodes
         if (episode + 1) % 10 == 0:
-            print(f"Episode {episode + 1}/{n_episodes}, "
-                  f"Success Rate: {success_count / (episode + 1):.2%}")
+            print(f"  → Progress: {episode + 1}/{n_episodes} episodes, "
+                  f"Current Success Rate: {success_count / (episode + 1):.2%}\n", flush=True)
     
     env.close()
     
     # Print results
     success_rate = success_count / n_episodes
     avg_reward = total_reward / n_episodes
+    std_reward = np.std(episode_rewards) if len(episode_rewards) > 1 else 0.0
     
     # Calculate failure distance statistics
     failure_count = n_episodes - success_count
@@ -269,7 +281,8 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     print(f"  Corruption Type: {corruption_type if corruption_type else 'None'}")
     print(f"  Episodes: {n_episodes}")
     print(f"  Task Success Rate: {success_rate:.2%} ({success_count}/{n_episodes})")
-    print(f"  Average Reward: {avg_reward:.4f}")
+<<<<<<< Updated upstream
+    print(f"  Average Reward: {avg_reward:.4f} (std: {std_reward:.4f})")
     if failure_count > 0:
         print(f"\n  Failed Trials Distance Statistics ({failure_count} failures):")
         print(f"    Average Distance from Target: {avg_failure_distance:.4f} m")
