@@ -67,13 +67,13 @@ def add_visual_corruption(env, corruption_type='distractor'):
             distractor_pos = [
                 random.uniform(-0.3, 0.3),  # Random x position
                 random.uniform(-0.3, 0.3),  # Random y position
-                0.05  # On board surface (5cm height for sphere center, radius 0.05)
+                0.02  # On board surface (5cm height for sphere center, radius 0.01)
             ]
             
             # Create a simple visual shape (sphere)
             visual_shape_id = p.createVisualShape(
                 shapeType=p.GEOM_SPHERE,
-                radius=0.05,  # 5cm radius
+                radius=0.02,  # 2cm radius
                 rgbaColor=[0.0, 1.0, 0.0, 1.0]  # Green
             )
             
@@ -86,12 +86,12 @@ def add_visual_corruption(env, corruption_type='distractor'):
             
         elif corruption_type == 'occlusion':
             # Add a large transparent box as occlusion (blocks ~half the board visually)
-            occlusion_pos = [0.0, 0.0, 0.15]  # In the middle, elevated
+            occlusion_pos = [0.0, 0.0, 0.2]  # In the middle, elevated
             
             visual_shape_id = p.createVisualShape(
                 shapeType=p.GEOM_BOX,
-                halfExtents=[0.3, 0.3, 0.1],  # Large box covering ~half the board area
-                rgbaColor=[0.5, 0.5, 0.5, 0.3]  # More transparent gray (lower alpha)
+                halfExtents=[0.1, 0.1, 0.15],
+                rgbaColor=[0.5, 0.5, 0.5, 0.3]
             )
             
             p.createMultiBody(
