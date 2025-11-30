@@ -104,6 +104,74 @@ def get_pixel_aug_transform():
     ])
 
 
+def get_light_aug_transform():
+    """
+    Get transform for light augmentation regime (only color jitter, no geometric changes).
+    Good for testing if color variations alone help.
+    
+    Returns:
+        transform: torchvision.transforms.Compose object
+    """
+    return transforms.Compose([
+        transforms.Resize((84, 84)),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+
+def get_heavy_aug_transform():
+    """
+    Get transform for heavy augmentation regime (stronger perturbations).
+    Includes: RandomResizedCrop, stronger ColorJitter, GaussianBlur, and RandomRotation.
+    
+    Returns:
+        transform: torchvision.transforms.Compose object
+    """
+    return transforms.Compose([
+        transforms.Resize((84, 84)),
+        transforms.RandomResizedCrop(size=84, scale=(0.7, 1.0)),
+        transforms.RandomRotation(degrees=10),
+        transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.2),
+        transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+
+def get_noise_aug_transform():
+    """
+    Get transform for noise-only augmentation (just Gaussian noise/blur, no color changes).
+    Tests robustness to sensor noise and blur.
+    
+    Returns:
+        transform: torchvision.transforms.Compose object
+    """
+    return transforms.Compose([
+        transforms.Resize((84, 84)),
+        transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+
+def get_geometric_aug_transform():
+    """
+    Get transform for geometric augmentation only (rotation, crop, no color changes).
+    Tests robustness to camera viewpoint changes.
+    
+    Returns:
+        transform: torchvision.transforms.Compose object
+    """
+    return transforms.Compose([
+        transforms.Resize((84, 84)),
+        transforms.RandomResizedCrop(size=84, scale=(0.8, 1.0)),
+        transforms.RandomRotation(degrees=5),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+
 if __name__ == '__main__':
     # Test the dataset
     print("Testing DemonstrationDataset...")

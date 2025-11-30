@@ -11,7 +11,15 @@ import argparse
 import os
 
 from policy import VisuomotorBCPolicy
-from data import DemonstrationDataset, get_clean_transform, get_pixel_aug_transform
+from data import (
+    DemonstrationDataset, 
+    get_clean_transform, 
+    get_pixel_aug_transform,
+    get_light_aug_transform,
+    get_heavy_aug_transform,
+    get_noise_aug_transform,
+    get_geometric_aug_transform
+)
 
 
 def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3, 
@@ -20,7 +28,7 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
     Train a behavior cloning policy.
     
     Args:
-        regime: Visual regime ('clean' or 'pixel_aug')
+        regime: Visual regime ('clean', 'pixel_aug', 'light_aug', 'heavy_aug', 'noise_aug', or 'geometric_aug')
         n_epochs: Number of training epochs
         batch_size: Batch size for training
         lr: Learning rate
@@ -38,8 +46,20 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
     elif regime == 'pixel_aug':
         transform = get_pixel_aug_transform()
         model_name = f'policy_pixel_aug_{backbone_type}.pth'
+    elif regime == 'light_aug':
+        transform = get_light_aug_transform()
+        model_name = f'policy_light_aug_{backbone_type}.pth'
+    elif regime == 'heavy_aug':
+        transform = get_heavy_aug_transform()
+        model_name = f'policy_heavy_aug_{backbone_type}.pth'
+    elif regime == 'noise_aug':
+        transform = get_noise_aug_transform()
+        model_name = f'policy_noise_aug_{backbone_type}.pth'
+    elif regime == 'geometric_aug':
+        transform = get_geometric_aug_transform()
+        model_name = f'policy_geometric_aug_{backbone_type}.pth'
     else:
-        raise ValueError(f"Unknown regime: {regime}")
+        raise ValueError(f"Unknown regime: {regime}. Options: clean, pixel_aug, light_aug, heavy_aug, noise_aug, geometric_aug")
     
     print(f"Training with {regime} visual regime and {backbone_type} backbone...")
     
@@ -107,7 +127,7 @@ def train_policy(regime='pixel_aug', n_epochs=50, batch_size=32, lr=1e-3,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train visuomotor BC policy')
     parser.add_argument('--regime', type=str, default='pixel_aug', 
-                       choices=['clean', 'pixel_aug'],
+                       choices=['clean', 'pixel_aug', 'light_aug', 'heavy_aug', 'noise_aug', 'geometric_aug'],
                        help='Visual regime for training')
     parser.add_argument('--epochs', type=int, default=50,
                        help='Number of training epochs')
