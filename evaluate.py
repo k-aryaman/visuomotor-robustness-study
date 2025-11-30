@@ -7,6 +7,7 @@ import torch
 import numpy as np
 import argparse
 import os
+import random
 import pybullet as p
 
 from panda_gym.envs import PandaPickAndPlaceEnv
@@ -60,15 +61,20 @@ def add_visual_corruption(env, corruption_type='distractor'):
         
         # Use the physics client (or default if None)
         if corruption_type == 'distractor':
-            # Add a red sphere as a static distractor
-            # Position it off-center, not interfering with the task
-            distractor_pos = [0.3, 0.3, 0.1]  # Off to the side
+            # Add a green sphere as a static distractor
+            # Position it randomly on the board (no collision, visual only)
+            # Random position on board: x, y in reasonable range, z on board surface
+            distractor_pos = [
+                random.uniform(-0.3, 0.3),  # Random x position
+                random.uniform(-0.3, 0.3),  # Random y position
+                0.02  # On board surface (5cm height for sphere center, radius 0.01)
+            ]
             
             # Create a simple visual shape (sphere)
             visual_shape_id = p.createVisualShape(
                 shapeType=p.GEOM_SPHERE,
-                radius=0.05,  # 5cm radius
-                rgbaColor=[1.0, 0.0, 0.0, 1.0]  # Red
+                radius=0.02,  # 2cm radius
+                rgbaColor=[0.0, 1.0, 0.0, 1.0]  # Green
             )
             
             # Create a multi-body with no collision (visual only)
@@ -79,13 +85,13 @@ def add_visual_corruption(env, corruption_type='distractor'):
             )
             
         elif corruption_type == 'occlusion':
-            # Add a small box as occlusion
-            occlusion_pos = [0.0, 0.0, 0.15]  # In the middle, elevated
+            # Add a large transparent box as occlusion (blocks ~half the board visually)
+            occlusion_pos = [0.0, 0.0, 0.2]  # In the middle, elevated
             
             visual_shape_id = p.createVisualShape(
                 shapeType=p.GEOM_BOX,
-                halfExtents=[0.03, 0.03, 0.05],  # Small box
-                rgbaColor=[0.5, 0.5, 0.5, 0.8]  # Semi-transparent gray
+                halfExtents=[0.1, 0.1, 0.15],
+                rgbaColor=[0.5, 0.5, 0.5, 0.3]
             )
             
             p.createMultiBody(
@@ -102,7 +108,7 @@ def add_visual_corruption(env, corruption_type='distractor'):
 
 def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100, 
                    device='cuda', image_size=(84, 84), backbone_type=None,
-                   max_steps=200):
+                   max_steps=200, eval_trajectories_file=''):
     """
     Evaluate a trained policy with visual corruption.
     
@@ -114,6 +120,8 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         image_size: Size of input images
         backbone_type: Backbone type used in the policy ('resnet', 'vit', or 'cnn'). 
                        If None, will be auto-detected from filename or checkpoint.
+        max_steps: Maximum steps per episode
+        eval_trajectories_file: Output file path for evaluation trajectories pickle file
     """
     device = torch.device(device if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -137,6 +145,11 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     # Evaluation loop
     success_count = 0
     total_reward = 0.0
+    failure_distances = []  # Track distances for failed trials
+    
+    # Store trajectories for visualization: list of (images, is_success, episode_idx)
+    # Format matches what visualize_eval_trajectories.py expects
+    trajectories_for_viz = []
     
     print(f"\nEvaluating policy for {n_episodes} episodes...")
     
@@ -155,11 +168,21 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
         done = False
         episode_reward = 0.0
         steps = 0
+        episode_images = []  # Store images for this episode
+        
         while not done and steps < max_steps:
             # Render to get image
             image = env.render()
             
-            # Preprocess image
+            # Store raw image for visualization (before transform)
+            if isinstance(image, np.ndarray):
+                if image.dtype != np.uint8:
+                    image_copy = (image * 255).astype(np.uint8)
+                else:
+                    image_copy = image.copy()
+                episode_images.append(image_copy)
+            
+            # Preprocess image for policy
             from PIL import Image
             if isinstance(image, np.ndarray):
                 if image.dtype != np.uint8:
@@ -181,8 +204,39 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
             steps += 1
         
         # Check success
-        if info.get('is_success', False) or episode_reward > 0:
+        is_success = info.get('is_success', False) or episode_reward > 0
+        
+        # Get final object and target positions for distance calculation
+        if isinstance(observation, dict):
+            final_object_pos = np.array(observation.get('achieved_goal', observation.get('observation', [0, 0, 0])[:3]))
+            final_target_pos = np.array(observation.get('desired_goal', [0, 0, 0]))
+        else:
+            obs_array = np.array(observation)
+            # Try to extract object and target positions from observation array
+            # This depends on the observation structure - adjust indices as needed
+            if len(obs_array) >= 13:
+                final_object_pos = obs_array[7:10]  # Object position
+                final_target_pos = obs_array[10:13]  # Target position
+            elif len(obs_array) >= 10:
+                final_object_pos = obs_array[7:10]
+                final_target_pos = np.zeros(3)  # Target not in observation
+            else:
+                final_object_pos = np.zeros(3)
+                final_target_pos = np.zeros(3)
+        
+        # Calculate final distance from target
+        final_distance = np.linalg.norm(final_object_pos - final_target_pos)
+        
+        if is_success:
             success_count += 1
+        else:
+            # Track distances for failed trials
+            failure_distances.append(final_distance)
+        
+        # Store trajectory for visualization: format expected by visualize_eval_trajectories.py
+        # (images, is_success, episode_idx)
+        if len(episode_images) > 0:
+            trajectories_for_viz.append((episode_images, is_success, episode))
         
         total_reward += episode_reward
         
@@ -196,6 +250,19 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     success_rate = success_count / n_episodes
     avg_reward = total_reward / n_episodes
     
+    # Calculate failure distance statistics
+    failure_count = n_episodes - success_count
+    if failure_count > 0 and len(failure_distances) > 0:
+        avg_failure_distance = np.mean(failure_distances)
+        min_failure_distance = np.min(failure_distances)
+        max_failure_distance = np.max(failure_distances)
+        median_failure_distance = np.median(failure_distances)
+    else:
+        avg_failure_distance = 0.0
+        min_failure_distance = 0.0
+        max_failure_distance = 0.0
+        median_failure_distance = 0.0
+    
     print(f"\n{'='*50}")
     print(f"Evaluation Results:")
     print(f"  Policy: {policy_path}")
@@ -203,9 +270,21 @@ def evaluate_policy(policy_path, corruption_type='distractor', n_episodes=100,
     print(f"  Episodes: {n_episodes}")
     print(f"  Task Success Rate: {success_rate:.2%} ({success_count}/{n_episodes})")
     print(f"  Average Reward: {avg_reward:.4f}")
+    if failure_count > 0:
+        print(f"\n  Failed Trials Distance Statistics ({failure_count} failures):")
+        print(f"    Average Distance from Target: {avg_failure_distance:.4f} m")
+        print(f"    Median Distance from Target: {median_failure_distance:.4f} m")
+        print(f"    Min Distance: {min_failure_distance:.4f} m")
+        print(f"    Max Distance: {max_failure_distance:.4f} m")
     print(f"{'='*50}")
     
-    return success_rate, avg_reward
+    # Save trajectories with metadata for later visualization
+    import pickle
+    with open(eval_trajectories_file, 'wb') as f:
+        pickle.dump(trajectories_for_viz, f)
+    print(f"\nSaved {len(trajectories_for_viz)} evaluation trajectories to {eval_trajectories_file}")
+    
+    return success_rate, avg_reward, trajectories_for_viz
 
 
 if __name__ == '__main__':
@@ -224,17 +303,20 @@ if __name__ == '__main__':
                        help='Backbone architecture (auto-detected from filename if not specified)')
     parser.add_argument('--max_steps', type=int, default=200,
                        help='Max steps per episode during evaluation')
+    parser.add_argument('--eval_trajectories_file', type=str, default='',
+                       help='Output file path for evaluation trajectories pickle file')
     
     args = parser.parse_args()
     
     corruption_type = None if args.corruption == 'none' else args.corruption
     
-    evaluate_policy(
+    success_rate, avg_reward, _ = evaluate_policy(
         policy_path=args.policy,
         corruption_type=corruption_type,
         n_episodes=args.episodes,
         device=args.device,
         backbone_type=args.backbone,
-        max_steps=args.max_steps
+        max_steps=args.max_steps,
+        eval_trajectories_file=args.eval_trajectories_file,
     )
 
